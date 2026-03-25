@@ -11,9 +11,11 @@ import dotenv from 'dotenv';
 import { M3UParserService } from './server/services/M3UParserService';
 import { StreamProxyService } from './server/services/StreamProxyService';
 import { CacheManager } from './server/services/CacheManager';
+import { AdminService } from './server/services/AdminService';
 
 // Import Middleware
 import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security';
+import { adminAuthMiddleware } from './server/middleware/adminAuth';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -133,6 +135,60 @@ async function startServer() {
       });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  /**
+   * Admin API Routes
+   */
+  app.get('/api/admin/users', adminAuthMiddleware, async (req, res) => {
+    try {
+      const users = await AdminService.listUsers();
+      res.json(users);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/admin/user/add', adminAuthMiddleware, express.json(), async (req, res) => {
+    try {
+      const { name, playlistUrl } = req.body;
+      const user = await AdminService.addUser(name, playlistUrl);
+      res.status(201).json(user);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/admin/user/status', adminAuthMiddleware, express.json(), async (req, res) => {
+    try {
+      const { userId, blocked } = req.body;
+      const success = await AdminService.toggleUserStatus(userId, blocked);
+      if (success) res.sendStatus(200);
+      else res.status(404).send('User not found');
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/admin/user/playlist', adminAuthMiddleware, express.json(), async (req, res) => {
+    try {
+      const { userId, playlistUrl } = req.body;
+      const success = await AdminService.updateUserPlaylist(userId, playlistUrl);
+      if (success) res.sendStatus(200);
+      else res.status(404).send('User not found');
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/admin/user/:id', adminAuthMiddleware, async (req, res) => {
+    try {
+      const success = await AdminService.deleteUser(req.params.id);
+      if (success) res.sendStatus(200);
+      else res.status(404).send('User not found');
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 

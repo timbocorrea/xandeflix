@@ -125,15 +125,12 @@ const styles = StyleSheet.create({
     transition: 'all 0.4s cubic-bezier(0.25, 1, 0.5, 1)',
   } as any,
   cardFocused: {
-    transform: 'scale(1.08) translateY(-10px)' as any,
+    transform: 'scale(1.08) translateY(-10px)',
     zIndex: 10,
     borderColor: '#E50914',
-    shadowColor: '#E50914',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.4,
-    shadowRadius: 15,
-    elevation: 20,
-  },
+    // @ts-ignore – web-only boxShadow
+    boxShadow: '0 12px 30px rgba(229, 9, 20, 0.4)',
+  } as any,
   cardInner: {
     width: '100%',
     height: '100%',
@@ -143,14 +140,22 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   placeholder: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(255,255,255,0.02)',
     zIndex: -1,
-  },
+  } as any,
   cardOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'flex-end',
-  },
+  } as any,
   overlayInner: {
     padding: 16,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -164,3 +169,4 @@ const styles = StyleSheet.create({
     fontFamily: 'Outfit',
   },
 });
+

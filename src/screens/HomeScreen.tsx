@@ -97,6 +97,10 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, []);
 
   const handleMenuSelect = useCallback((filter: string) => {
+    if (filter === 'admin') {
+      useStore.getState().setIsAdminMode(true);
+      return;
+    }
     useStore.getState().setActiveFilter(filter);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   }, []);

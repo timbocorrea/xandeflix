@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { HomeScreen } from './screens/HomeScreen';
+import HomeScreen from './screens/HomeScreen';
 import { SetupScreen } from './screens/SetupScreen';
+import { AdminPanel } from './screens/AdminPanel';
+import { useStore } from './store/useStore';
 
 export default function App() {
   const [playlistUrl, setPlaylistUrl] = useState<string | null>(null);
@@ -24,11 +26,15 @@ export default function App() {
     setPlaylistUrl(null);
   };
 
+  const { isAdminMode } = useStore();
+
   if (!isReady) return null;
 
   return (
     <div className="w-full h-full bg-[#050505]">
-      {!playlistUrl ? (
+      {isAdminMode ? (
+        <AdminPanel />
+      ) : !playlistUrl ? (
         <SetupScreen onComplete={handleSetupComplete} />
       ) : (
         <HomeScreen onLogout={handleLogout} />
