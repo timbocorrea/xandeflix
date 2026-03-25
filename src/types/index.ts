@@ -1,0 +1,32 @@
+export enum MediaType {
+  MOVIE = 'movie',
+  SERIES = 'series',
+  EPISODE = 'episode'
+}
+
+export interface Media {
+  id: string;
+  title: string;
+  description: string;
+  thumbnail: string;
+  backdrop: string;
+  videoUrl: string;
+  type: MediaType;
+  year: number;
+  rating: string;
+  duration?: string;
+  category: string;
+}
+
+export interface Category {
+  id: string;
+  title: string;
+  type?: string;
+  items: Media[];
+}
+
+export interface User {
+  id: string;
+  name: string;
+  avatar: string;
+}
