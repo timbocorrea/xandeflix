@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "build:clean": "rimraf dist && tsc -p tsconfig.json",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "eslint . --ext .ts,.tsx",
+    "analyze": "source-map-explorer 'dist/assets/*.js'"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

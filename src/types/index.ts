@@ -1,7 +1,8 @@
 export enum MediaType {
   MOVIE = 'movie',
   SERIES = 'series',
-  EPISODE = 'episode'
+  EPISODE = 'episode',
+  LIVE = 'live'
 }
 
 export interface Media {
