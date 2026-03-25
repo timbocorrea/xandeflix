@@ -40,20 +40,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     const saved = localStorage.getItem('xandeflix_hidden_categories');
     return saved ? JSON.parse(saved) : [];
   });
-  const [playlistUrl, setPlaylistUrl] = useState(() => {
-    return localStorage.getItem('xandeflix_playlist_url') || '';
-  });
   const scrollRef = useRef<ScrollView>(null);
 
-  const fetchPlaylist = useCallback(async (url: string) => {
-    if (!url) return;
+  const fetchPlaylist = useCallback(async () => {
     setLoading(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
-      console.log('Fetching playlist from:', url);
-      const apiUrl = `/api/playlist?url=${encodeURIComponent(url)}`;
+      console.log('Fetching centralized playlist...');
+      const apiUrl = `/api/playlist`;
       const response = await fetch(apiUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
       
@@ -65,7 +61,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         setAllCategories(data);
         setIsUsingMock(false);
       } else {
-        console.warn('Playlist is empty, using mock data');
+        console.warn('Playlist is empty or invalid, using mock data');
         setAllCategories(MOCK_CATEGORIES);
         setIsUsingMock(true);
       }
@@ -79,8 +75,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   }, []);
 
   useEffect(() => {
-    fetchPlaylist(playlistUrl);
-  }, [fetchPlaylist, playlistUrl]);
+    fetchPlaylist();
+  }, [fetchPlaylist]);
 
   // Auto-rotation logic for Hero section
   useEffect(() => {
@@ -141,12 +137,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   }, [allCategories, hiddenCategoryIds, activeFilter]);
 
   const handleSaveSettings = (newUrl: string, newHiddenIds: string[]) => {
-    // Check if URL changed to decide if we need to re-fetch
-    if (newUrl !== playlistUrl) {
-      setPlaylistUrl(newUrl);
-      localStorage.setItem('xandeflix_playlist_url', newUrl);
-    }
-
+    // URL management is now backend-only, but we keep the signature for compatibility with legacy props or future admin use
     setHiddenCategoryIds(newHiddenIds);
     localStorage.setItem('xandeflix_hidden_categories', JSON.stringify(newHiddenIds));
   };
@@ -183,8 +174,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
   if (!selectedMedia) return null;
 
-  const renderMediaItem = ({ item, index, rowIndex }: { item: Media; index: number; rowIndex: number }) => {
-    const navId = `${rowIndex}-${index}`;
+  // Optimized MediaItem component with memoization
+  const MediaItem = React.memo(({ item, rowIndex, index }: { item: Media, rowIndex: number, index: number }) => {
+    const navId = `item-${rowIndex}-${index}`;
     const isFocused = focusedId === navId;
 
     return (
@@ -206,7 +198,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             source={{ uri: item.thumbnail }} 
             style={styles.thumbnail}
             resizeMode="cover"
+            // Optimization for web
+            // @ts-ignore
+            loading="lazy"
           />
+          {/* Subtle placeholder/loading state */}
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.03)', zIndex: -1 }]} />
+          
           {isFocused && (
             <View style={styles.cardOverlay}>
               <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
@@ -215,20 +213,34 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         </View>
       </TouchableHighlight>
     );
+  });
+
+  // This function is now a wrapper that renders the memoized MediaItem
+  const renderMediaItem = ({ item, index }: { item: Media; index: number }, rowIndex: number) => {
+    return <MediaItem item={item} rowIndex={rowIndex} index={index} />;
   };
 
-  const renderCategoryRow = (category: Category, rowIndex: number) => (
-    <View key={category.id} style={styles.categoryRow}>
+  // Memoized Category Row to prevent full list re-renders
+  const CategoryRow = React.memo(({ category, rowIndex }: { category: Category, rowIndex: number }) => (
+    <View style={styles.categoryRow}>
       <Text style={styles.categoryTitle}>{category.title}</Text>
       <FlatList
         horizontal
         data={category.items}
-        renderItem={(props) => renderMediaItem({ ...props, rowIndex })}
+        renderItem={(props) => renderMediaItem(props, rowIndex)}
         keyExtractor={(item, idx) => `${category.id}-${item.id}-${idx}`}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.flatListContent}
+        removeClippedSubviews={true} // Performance optimization
+        initialNumToRender={5}
+        maxToRenderPerBatch={5}
+        windowSize={3}
       />
     </View>
+  ));
+
+  const renderCategoryRow = (category: Category, rowIndex: number) => (
+    <CategoryRow key={category.id} category={category} rowIndex={rowIndex} />
   );
 
   return (
@@ -277,7 +289,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
                 <Text style={styles.mockBadgeText}>MODO DEMO: LISTA NÃO CARREGADA</Text>
               </View>
               <TouchableHighlight
-                onPress={() => fetchPlaylist(playlistUrl)}
+                onPress={() => fetchPlaylist()}
                 underlayColor="rgba(255,255,255,0.1)"
                 style={styles.retryButton}
               >
@@ -430,7 +442,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         isVisible={isSettingsVisible}
         onClose={() => setIsSettingsVisible(false)}
         onSave={handleSaveSettings}
-        currentUrl={playlistUrl}
+        currentUrl={""}
         onLogout={onLogout}
         allCategories={allCategories}
         hiddenCategoryIds={hiddenCategoryIds}

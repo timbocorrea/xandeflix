@@ -4,9 +4,61 @@ import path from 'path';
 import axios from 'axios';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Configure environment variables
+dotenv.config();
+
+// Global whitelist for SSRF protection
+const authorizedDomains = new Set<string>(['dnsd1.space', 'localhost', '127.0.0.1']);
+
+// Playlist cache
+const playlistCache = new Map<string, { data: any, timestamp: number }>();
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+// Seed whitelist with domain from environment variable if present
+if (process.env.PLAYLIST_URL) {
+  try {
+    const url = new URL(process.env.PLAYLIST_URL);
+    authorizedDomains.add(url.hostname);
+  } catch (e) {
+    console.warn('Invalid PLAYLIST_URL in environment, could not seed whitelist hostname.');
+  }
+}
+
+/**
+ * Parses M3U attributes and determines content type
+ */
+function parseM3UAttributes(attributes: string, name: string) {
+  const logoMatch = attributes.match(/tvg-logo="([^"]*)"/i);
+  const groupMatch = attributes.match(/group-title="([^"]*)"/i);
+  const xtreamGroupMatch = attributes.match(/group-id="([^"]*)"/i);
+  
+  let category = 'Geral';
+  if (groupMatch) category = groupMatch[1];
+  else if (xtreamGroupMatch) category = xtreamGroupMatch[1];
+  
+  let type = 'live';
+  const catLower = category.toLowerCase();
+  const nameLower = name.toLowerCase();
+
+  if (catLower.includes('filme') || catLower.includes('movie') || catLower.includes('vod') || nameLower.includes('filme') || nameLower.includes('vod')) {
+    type = 'movie';
+  } else if (catLower.includes('serie') || nameLower.includes('serie') || catLower.includes('season') || nameLower.includes('season')) {
+    type = 'series';
+  }
+
+  return {
+    title: name,
+    thumbnail: logoMatch ? logoMatch[1] : `https://picsum.photos/seed/${encodeURIComponent(name)}/400/225`,
+    category: category,
+    type: type,
+    id: Math.random().toString(36).substr(2, 9)
+  };
+}
 
 async function startServer() {
   const app = express();
@@ -16,8 +68,19 @@ async function startServer() {
 
   // API Route to fetch and parse M3U playlist
   app.get('/api/playlist', async (req, res) => {
-    // Get URL from query parameter or use the default one
-    const playlistUrl = (req.query.url as string) || 'http://dnsd1.space/get.php?username=952279118&password=823943744&type=m3u_plus&output=mpegts';
+    // Get URL from query parameter or use the environment variable/default
+    const playlistUrl = (req.query.url as string) || process.env.PLAYLIST_URL || '';
+    
+    if (!playlistUrl) {
+      return res.status(400).json({ error: 'Playlist URL not provided and no default configured in environment.' });
+    }
+
+    // Check cache
+    const cached = playlistCache.get(playlistUrl);
+    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+      console.log(`Serving playlist from cache (${Math.round((Date.now() - cached.timestamp) / 60000)}m old):`, playlistUrl);
+      return res.json(cached.data);
+    }
     
     try {
       console.log('Fetching playlist from:', playlistUrl);
@@ -77,31 +140,7 @@ async function startServer() {
             attributes = line.substring(line.indexOf(':') + 1).trim();
           }
             
-          const logoMatch = attributes.match(/tvg-logo="([^"]*)"/i);
-          const groupMatch = attributes.match(/group-title="([^"]*)"/i);
-          const xtreamGroupMatch = attributes.match(/group-id="([^"]*)"/i);
-          
-          let category = 'Geral';
-          if (groupMatch) category = groupMatch[1];
-          else if (xtreamGroupMatch) category = xtreamGroupMatch[1];
-          
-          let type = 'live';
-          const catLower = category.toLowerCase();
-          const nameLower = name.toLowerCase();
-
-          if (catLower.includes('filme') || catLower.includes('movie') || catLower.includes('vod') || nameLower.includes('filme') || nameLower.includes('vod')) {
-            type = 'movie';
-          } else if (catLower.includes('serie') || nameLower.includes('serie') || catLower.includes('season') || nameLower.includes('season')) {
-            type = 'series';
-          }
-
-          currentItem = {
-            title: name,
-            thumbnail: logoMatch ? logoMatch[1] : `https://picsum.photos/seed/${encodeURIComponent(name)}/400/225`,
-            category: category,
-            type: type,
-            id: Math.random().toString(36).substr(2, 9)
-          };
+          currentItem = parseM3UAttributes(attributes, name);
         } else if (line.startsWith('http')) {
           // If we have a URL but no currentItem (no #EXTINF), create a generic one
           if (!currentItem) {
@@ -121,6 +160,14 @@ async function startServer() {
           currentItem.rating = '12+';
           currentItem.duration = currentItem.type === 'live' ? 'Ao Vivo' : 'VOD';
           
+          // Add hostname to whitelist
+          try {
+            const streamUrlObj = new URL(line);
+            authorizedDomains.add(streamUrlObj.hostname);
+          } catch (e) {
+            // Skip invalid URLs
+          }
+
           items.push(currentItem);
           currentItem = null;
         }
@@ -157,6 +204,12 @@ async function startServer() {
         };
       }).slice(0, 200);
 
+      // Store in cache
+      playlistCache.set(playlistUrl, {
+        data: categories,
+        timestamp: Date.now()
+      });
+
       res.json(categories);
     } catch (error: any) {
       console.error('Error fetching playlist:', error.message);
@@ -166,7 +219,11 @@ async function startServer() {
 
   // Diagnostic endpoint
   app.get('/api/diagnostic', async (req, res) => {
-    let testUrl = req.query.url as string || 'http://dnsd1.space/get.php?username=952279118&password=823943744&type=m3u_plus&output=ts';
+    let testUrl = req.query.url as string || process.env.PLAYLIST_URL || '';
+    
+    if (!testUrl) {
+      return res.status(400).json({ error: 'URL for diagnostic not provided and no default configured in environment.' });
+    }
     
     // If it's a proxy URL, extract the real target URL
     if (testUrl.startsWith('/api/stream')) {
@@ -179,6 +236,20 @@ async function startServer() {
       } catch (e) {
         console.error('Failed to parse proxy URL in diagnostic:', e);
       }
+    }
+
+    // Security check (Whitelist)
+    try {
+      const urlObj = new URL(testUrl);
+      if (!authorizedDomains.has(urlObj.hostname)) {
+        console.warn(`Blocked diagnostic request to unauthorized domain: ${urlObj.hostname}`);
+        return res.status(403).json({ 
+          error: 'Forbidden', 
+          message: 'O domínio solicitado não está na lista de permissões de segurança (Whitelist).' 
+        });
+      }
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid URL' });
     }
     
     try {
@@ -240,6 +311,17 @@ async function startServer() {
       return res.status(400).send('URL is required');
     }
 
+    // Security check (Whitelist)
+    try {
+      const urlObj = new URL(streamUrl);
+      if (!authorizedDomains.has(urlObj.hostname)) {
+        console.warn(`Blocked stream request to unauthorized domain: ${urlObj.hostname}`);
+        return res.status(403).send('Forbidden: O domínio solicitado não está autorizado.');
+      }
+    } catch (e) {
+      return res.status(400).send('Invalid URL');
+    }
+
     try {
       const urlObj = new URL(streamUrl);
       const headers: any = {
@@ -261,7 +343,7 @@ async function startServer() {
         method: req.method,
         headers: headers,
         timeout: 60000, // Increased timeout
-        rejectUnauthorized: false // Ignore SSL errors from IPTV servers
+        rejectUnauthorized: true // Enforce SSL certificate validation for security
       };
 
       const proxyReq = protocol.request(streamUrl, requestOptions, (proxyRes) => {
@@ -358,9 +440,29 @@ async function startServer() {
         if (!res.headersSent) res.status(504).send('IPTV Server Timeout');
       });
 
-      proxyReq.on('error', (err) => {
-        console.error('Proxy request error for:', streamUrl, err.message);
-        if (!res.headersSent) res.status(500).send(`Proxy Error: ${err.message}`);
+      proxyReq.on('error', (err: any) => {
+        // Log detailed error for diagnostic purposes
+        let errorMessage = err.message;
+        
+        // Specifically detect and log SSL/TLS certificate errors
+        if (err.code === 'CERT_HAS_EXPIRED' || 
+            err.code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || 
+            err.code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+            err.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
+          console.error(`[SECURITY] SSL Certificate Validation Failed for: ${streamUrl}`);
+          console.error(`[SECURITY] Reason: ${err.code} - ${err.message}`);
+          errorMessage = `IPTV Server Certificate Error: ${err.code}. Security validation blocked the request.`;
+        } else {
+          console.error('Proxy request error for:', streamUrl, err.message);
+        }
+
+        if (!res.headersSent) {
+          res.status(err.status || 500).json({
+            error: 'Proxy Error',
+            message: errorMessage,
+            code: err.code
+          });
+        }
       });
 
       if (req.method !== 'HEAD') {

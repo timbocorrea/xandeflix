@@ -23,18 +23,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   allCategories,
   hiddenCategoryIds
 }) => {
-  const [url, setUrl] = useState(currentUrl);
   const [localHiddenIds, setLocalHiddenIds] = useState<string[]>(hiddenCategoryIds);
   const [activeTab, setActiveTab] = useState<'general' | 'categories'>('general');
-  const DEFAULT_URL = 'http://dnsd1.space/get.php?username=952279118&password=823943744&type=m3u_plus&output=mpegts';
 
   useEffect(() => {
-    setUrl(currentUrl);
     setLocalHiddenIds(hiddenCategoryIds);
-  }, [currentUrl, hiddenCategoryIds, isVisible]);
+  }, [hiddenCategoryIds, isVisible]);
 
   const handleSave = () => {
-    onSave(url, localHiddenIds);
+    onSave(currentUrl, localHiddenIds);
     onClose();
   };
 
@@ -42,10 +39,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setLocalHiddenIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
-  };
-
-  const handleReset = () => {
-    setUrl(DEFAULT_URL);
   };
 
   return (
@@ -95,7 +88,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               <View style={styles.tabInner}>
                 <Link size={18} color={activeTab === 'general' ? '#E50914' : 'rgba(255,255,255,0.5)'} />
-                <Text style={[styles.tabText, activeTab === 'general' && styles.activeTabText]}>Geral</Text>
+                <Text style={[styles.tabText, activeTab === 'general' && styles.activeTabText]}>Sessão</Text>
               </View>
             </TouchableHighlight>
             <TouchableHighlight
@@ -114,20 +107,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <View style={styles.content}>
             {activeTab === 'general' ? (
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>URL da Lista M3U8 / M3U</Text>
-                <TextInput
-                  style={styles.input}
-                  value={url}
-                  onChangeText={setUrl}
-                  placeholder="http://exemplo.com/lista.m3u"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  autoFocus
-                  // @ts-ignore
-                  className="focus:border-red-600 focus:ring-1 focus:ring-red-600 outline-none"
-                />
-                <Text style={styles.hint}>
-                  Insira a URL completa fornecida pelo seu provedor de IPTV. O aplicativo irá processar os canais, filmes e séries automaticamente.
-                </Text>
+                <Text style={styles.label}>Informações do Aplicativo</Text>
+                <View style={{ backgroundColor: 'rgba(255,255,255,0.02)', padding: 20, borderRadius: 12, marginBottom: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }}>
+                  <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', marginBottom: 4 }}>Xandeflix Premium</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 14 }}>Versão 1.2.5 • Estável</Text>
+                  <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.05)', marginVertical: 16 }} />
+                  <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, lineHeight: 20 }}>
+                    Este aplicativo é um reprodutor de mídia para listas IPTV. A gestão de conteúdo é realizada de forma centralizada pelo administrador.
+                  </Text>
+                </View>
 
                 <View style={styles.actions}>
                   <TouchableHighlight
@@ -144,29 +132,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   >
                     <View style={styles.buttonInner}>
                       <RotateCcw size={18} color="#ef4444" className="mr-2" />
-                      <Text style={[styles.buttonText, { color: '#ef4444' }]}>Trocar Lista</Text>
-                    </View>
-                  </TouchableHighlight>
-
-                  <TouchableHighlight
-                    onPress={handleReset}
-                    underlayColor="rgba(255,255,255,0.1)"
-                    style={styles.resetButton}
-                  >
-                    <View style={styles.buttonInner}>
-                      <RotateCcw size={18} color="white" className="mr-2" />
-                      <Text style={styles.buttonText}>Restaurar Padrão</Text>
-                    </View>
-                  </TouchableHighlight>
-
-                  <TouchableHighlight
-                    onPress={handleSave}
-                    underlayColor="#b91c1c"
-                    style={styles.saveButton}
-                  >
-                    <View style={styles.buttonInner}>
-                      <Save size={18} color="white" className="mr-2" />
-                      <Text style={styles.buttonText}>Salvar e Atualizar</Text>
+                      <Text style={[styles.buttonText, { color: '#ef4444' }]}>Terminar Sessão</Text>
                     </View>
                   </TouchableHighlight>
                 </View>
