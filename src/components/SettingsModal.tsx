@@ -7,12 +7,11 @@ import { Category } from '../types';
 interface SettingsModalProps {
   isVisible: boolean;
   onClose: () => void;
-  onSave: (url: string) => void;
+  onSave: (url: string, hiddenIds: string[]) => void;
   currentUrl: string;
   onLogout?: () => void;
   allCategories: Category[];
   hiddenCategoryIds: string[];
-  onToggleCategory: (id: string) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ 
@@ -22,20 +21,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentUrl, 
   onLogout,
   allCategories,
-  hiddenCategoryIds,
-  onToggleCategory
+  hiddenCategoryIds
 }) => {
   const [url, setUrl] = useState(currentUrl);
+  const [localHiddenIds, setLocalHiddenIds] = useState<string[]>(hiddenCategoryIds);
   const [activeTab, setActiveTab] = useState<'general' | 'categories'>('general');
   const DEFAULT_URL = 'http://dnsd1.space/get.php?username=952279118&password=823943744&type=m3u_plus&output=mpegts';
 
   useEffect(() => {
     setUrl(currentUrl);
-  }, [currentUrl, isVisible]);
+    setLocalHiddenIds(hiddenCategoryIds);
+  }, [currentUrl, hiddenCategoryIds, isVisible]);
 
   const handleSave = () => {
-    onSave(url);
+    onSave(url, localHiddenIds);
     onClose();
+  };
+
+  const toggleLocalCategory = (id: string) => {
+    setLocalHiddenIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
   };
 
   const handleReset = () => {
@@ -58,10 +64,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             borderRadius: 16,
             borderColor: 'rgba(255,255,255,0.1)',
             borderWidth: 1,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 25 },
-            shadowOpacity: 0.5,
-            shadowRadius: 50,
+            boxShadow: '0 25px 50px rgba(0,0,0,0.5)' as any,
             overflow: 'hidden',
             flexDirection: 'column',
           }}
@@ -69,7 +72,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Link size={24} color="#E50914" style={{ marginRight: 12 }} />
+              <Link size={24} color="#E50914" className="mr-3" />
               <Text style={styles.title}>Configurações</Text>
             </View>
             <TouchableHighlight
@@ -77,7 +80,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               underlayColor="rgba(255,255,255,0.1)"
               style={styles.closeButton}
             >
-              <X size={24} color="white" />
+              <View>
+                <X size={24} color="white" />
+              </View>
             </TouchableHighlight>
           </View>
 
@@ -86,21 +91,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <TouchableHighlight
               onPress={() => setActiveTab('general')}
               underlayColor="rgba(255,255,255,0.05)"
-              style={StyleSheet.flatten([styles.tab, activeTab === 'general' && styles.activeTab])}
+              style={[styles.tab, activeTab === 'general' && styles.activeTab]}
             >
               <View style={styles.tabInner}>
                 <Link size={18} color={activeTab === 'general' ? '#E50914' : 'rgba(255,255,255,0.5)'} />
-                <Text style={StyleSheet.flatten([styles.tabText, activeTab === 'general' && styles.activeTabText])}>Geral</Text>
+                <Text style={[styles.tabText, activeTab === 'general' && styles.activeTabText]}>Geral</Text>
               </View>
             </TouchableHighlight>
             <TouchableHighlight
               onPress={() => setActiveTab('categories')}
               underlayColor="rgba(255,255,255,0.05)"
-              style={StyleSheet.flatten([styles.tab, activeTab === 'categories' && styles.activeTab])}
+              style={[styles.tab, activeTab === 'categories' && styles.activeTab]}
             >
               <View style={styles.tabInner}>
                 <List size={18} color={activeTab === 'categories' ? '#E50914' : 'rgba(255,255,255,0.5)'} />
-                <Text style={StyleSheet.flatten([styles.tabText, activeTab === 'categories' && styles.activeTabText])}>Categorias</Text>
+                <Text style={[styles.tabText, activeTab === 'categories' && styles.activeTabText]}>Categorias</Text>
               </View>
             </TouchableHighlight>
           </View>
@@ -138,8 +143,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     style={styles.logoutButton}
                   >
                     <View style={styles.buttonInner}>
-                      <RotateCcw size={18} color="#ef4444" style={{ marginRight: 8 }} />
-                      <Text style={StyleSheet.flatten([styles.buttonText, { color: '#ef4444' }])}>Trocar Lista</Text>
+                      <RotateCcw size={18} color="#ef4444" className="mr-2" />
+                      <Text style={[styles.buttonText, { color: '#ef4444' }]}>Trocar Lista</Text>
                     </View>
                   </TouchableHighlight>
 
@@ -149,7 +154,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     style={styles.resetButton}
                   >
                     <View style={styles.buttonInner}>
-                      <RotateCcw size={18} color="white" style={{ marginRight: 8 }} />
+                      <RotateCcw size={18} color="white" className="mr-2" />
                       <Text style={styles.buttonText}>Restaurar Padrão</Text>
                     </View>
                   </TouchableHighlight>
@@ -160,7 +165,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     style={styles.saveButton}
                   >
                     <View style={styles.buttonInner}>
-                      <Save size={18} color="white" style={{ marginRight: 8 }} />
+                      <Save size={18} color="white" className="mr-2" />
                       <Text style={styles.buttonText}>Salvar e Atualizar</Text>
                     </View>
                   </TouchableHighlight>
@@ -174,23 +179,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </Text>
                 <ScrollView style={styles.categoryList} showsVerticalScrollIndicator={false}>
                   {allCategories.map((category) => {
-                    const isHidden = hiddenCategoryIds.includes(category.id);
+                    const isHidden = localHiddenIds.includes(category.id);
                     return (
                       <TouchableHighlight
                         key={category.id}
-                        onPress={() => onToggleCategory(category.id)}
+                        onPress={() => toggleLocalCategory(category.id)}
                         underlayColor="rgba(255,255,255,0.05)"
                         style={styles.categoryItem}
                       >
                         <View style={styles.categoryItemInner}>
-                          <View style={StyleSheet.flatten([
+                          <View style={[
                             styles.checkbox,
                             !isHidden && styles.checkboxChecked
-                          ])}>
+                          ]}>
                             {!isHidden && <Check size={14} color="white" />}
                           </View>
                           <View style={{ flex: 1 }}>
-                            <Text style={StyleSheet.flatten([styles.categoryName, isHidden && styles.categoryNameHidden])}>
+                            <Text style={[styles.categoryName, isHidden && styles.categoryNameHidden]}>
                               {category.title}
                             </Text>
                             <Text style={styles.categoryCount}>
@@ -202,6 +207,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     );
                   })}
                 </ScrollView>
+                
+                <View style={[styles.actions, { marginTop: 24 }]}>
+                  <TouchableHighlight
+                    onPress={handleSave}
+                    underlayColor="#b91c1c"
+                    style={styles.saveButton}
+                  >
+                    <View style={styles.buttonInner}>
+                      <Save size={18} color="white" className="mr-2" />
+                      <Text style={styles.buttonText}>Confirmar Alterações</Text>
+                    </View>
+                  </TouchableHighlight>
+                </View>
               </View>
             )}
           </View>

@@ -46,9 +46,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   const scrollRef = useRef<ScrollView>(null);
 
   const fetchPlaylist = useCallback(async (url: string) => {
+    if (!url) return;
     setLoading(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // Increased to 60s
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       console.log('Fetching playlist from:', url);
@@ -59,47 +60,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       
       const data = await response.json();
-      console.log('Playlist data received:', Array.isArray(data) ? `${data.length} categories` : 'Invalid data');
       
       if (Array.isArray(data) && data.length > 0) {
         setAllCategories(data);
         setIsUsingMock(false);
-        // Initial sort for Home
-        const sorted = [...data].sort((a, b) => {
-          const order: { [key: string]: number } = { 'live': 1, 'movie': 2, 'series': 3 };
-          const typeA = a.type || 'live';
-          const typeB = b.type || 'live';
-          return (order[typeA] || 99) - (order[typeB] || 99);
-        });
-        
-        // Filter out hidden categories
-        const visible = sorted.filter(cat => !hiddenCategoryIds.includes(cat.id));
-        setFilteredCategories(visible);
-        
-        if (visible[0]?.items?.[0]) {
-          setSelectedMedia(visible[0].items[0]);
-        } else if (sorted[0]?.items?.[0]) {
-          setSelectedMedia(sorted[0].items[0]);
-        } else {
-          setSelectedMedia(MOCK_CATEGORIES[0].items[0]);
-        }
       } else {
         console.warn('Playlist is empty, using mock data');
         setAllCategories(MOCK_CATEGORIES);
-        setFilteredCategories(MOCK_CATEGORIES);
-        setSelectedMedia(MOCK_CATEGORIES[0].items[0]);
         setIsUsingMock(true);
       }
     } catch (error) {
       console.error('Error fetching playlist:', error);
       setAllCategories(MOCK_CATEGORIES);
-      setFilteredCategories(MOCK_CATEGORIES);
-      setSelectedMedia(MOCK_CATEGORIES[0].items[0]);
       setIsUsingMock(true);
     } finally {
       setLoading(false);
     }
-  }, [hiddenCategoryIds]);
+  }, []);
 
   useEffect(() => {
     fetchPlaylist(playlistUrl);
@@ -130,22 +107,48 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     return () => clearInterval(interval);
   }, [isAutoRotating, activeVideoUrl, isSettingsVisible, filteredCategories, selectedMedia]);
 
-  const handleSaveSettings = (newUrl: string) => {
-    setPlaylistUrl(newUrl);
-    localStorage.setItem('xandeflix_playlist_url', newUrl);
-  };
+  // Effect to handle filtering when dependencies change
+  useEffect(() => {
+    if (allCategories.length === 0) return;
 
-  const handleToggleCategory = (id: string) => {
-    const newHidden = hiddenCategoryIds.includes(id)
-      ? hiddenCategoryIds.filter(hid => hid !== id)
-      : [...hiddenCategoryIds, id];
+    let result = [...allCategories];
     
-    setHiddenCategoryIds(newHidden);
-    localStorage.setItem('xandeflix_hidden_categories', JSON.stringify(newHidden));
+    // Always filter by hidden IDs
+    result = result.filter(cat => !hiddenCategoryIds.includes(cat.id));
+
+    if (activeFilter === 'home') {
+      result.sort((a, b) => {
+        const order: { [key: string]: number } = { 'live': 1, 'movie': 2, 'series': 3 };
+        const typeA = a.type || 'live';
+        const typeB = b.type || 'live';
+        return (order[typeA] || 99) - (order[typeB] || 99);
+      });
+    } else if (activeFilter !== 'all' && activeFilter !== 'settings' && activeFilter !== 'search' && activeFilter !== 'mylist') {
+      // Filter by type if a specific type is selected (live, movies, series)
+      const typeMap: { [key: string]: string } = { 'live': 'live', 'movies': 'movie', 'series': 'series' };
+      const targetType = typeMap[activeFilter];
+      if (targetType) {
+        result = result.filter(cat => cat.type === targetType);
+      }
+    }
+
+    setFilteredCategories(result);
     
-    // Update filtered categories immediately
-    const visible = allCategories.filter(cat => !newHidden.includes(cat.id));
-    setFilteredCategories(visible);
+    // Set initial selected media if none is selected or if current is no longer visible
+    if (!selectedMedia && result.length > 0 && result[0].items.length > 0) {
+      setSelectedMedia(result[0].items[0]);
+    }
+  }, [allCategories, hiddenCategoryIds, activeFilter]);
+
+  const handleSaveSettings = (newUrl: string, newHiddenIds: string[]) => {
+    // Check if URL changed to decide if we need to re-fetch
+    if (newUrl !== playlistUrl) {
+      setPlaylistUrl(newUrl);
+      localStorage.setItem('xandeflix_playlist_url', newUrl);
+    }
+
+    setHiddenCategoryIds(newHiddenIds);
+    localStorage.setItem('xandeflix_hidden_categories', JSON.stringify(newHiddenIds));
   };
 
   const handleMenuSelect = (id: string) => {
@@ -155,34 +158,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     }
     
     setActiveFilter(id);
-    if (id === 'home') {
-      // Sort all categories by type: live, movie, series
-      const sorted = [...allCategories].sort((a, b) => {
-        const order: { [key: string]: number } = { 'live': 1, 'movie': 2, 'series': 3 };
-        const typeA = a.type || 'live';
-        const typeB = b.type || 'live';
-        return (order[typeA] || 99) - (order[typeB] || 99);
-      });
-      const visible = sorted.filter(cat => !hiddenCategoryIds.includes(cat.id));
-      setFilteredCategories(visible);
-      if (visible.length > 0) setSelectedMedia(visible[0].items[0]);
-    } else if (id === 'live') {
-      const filtered = allCategories.filter(cat => cat.type === 'live' && !hiddenCategoryIds.includes(cat.id));
-      setFilteredCategories(filtered);
-      if (filtered.length > 0) setSelectedMedia(filtered[0].items[0]);
-    } else if (id === 'movies') {
-      const filtered = allCategories.filter(cat => cat.type === 'movie' && !hiddenCategoryIds.includes(cat.id));
-      setFilteredCategories(filtered);
-      if (filtered.length > 0) setSelectedMedia(filtered[0].items[0]);
-    } else if (id === 'series') {
-      const filtered = allCategories.filter(cat => cat.type === 'series' && !hiddenCategoryIds.includes(cat.id));
-      setFilteredCategories(filtered);
-      if (filtered.length > 0) setSelectedMedia(filtered[0].items[0]);
-    } else if (id === 'all') {
-      const visible = allCategories.filter(cat => !hiddenCategoryIds.includes(cat.id));
-      setFilteredCategories(visible);
-      if (visible.length > 0) setSelectedMedia(visible[0].items[0]);
-    }
     setFocusedId('hero-play');
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   };
@@ -199,7 +174,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
   if (loading) {
     return (
-      <View style={StyleSheet.flatten([styles.container, { justifyContent: 'center', alignItems: 'center' }])}>
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <Text style={{ fontSize: 32, fontWeight: 'bold', color: 'white' }}>Carregando XANDEFLIX...</Text>
         <Text style={{ color: '#6B7280', marginTop: 16 }}>Extraindo biblioteca M3U8...</Text>
       </View>
@@ -219,10 +194,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         // @ts-ignore - for web compatibility
         onClick={() => handlePlay(item)}
         underlayColor="transparent"
-        style={StyleSheet.flatten([
+        style={[
           styles.cardContainer,
           isFocused && styles.cardFocused
-        ])}
+        ]}
         // @ts-ignore - for web compatibility
         className="cursor-pointer"
       >
@@ -261,7 +236,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       <SideMenu onSelect={handleMenuSelect} activeId={activeFilter} onLogout={onLogout} />
       
       {/* Hero Background */}
-      <View style={styles.heroBackground} pointerEvents="none">
+      <View style={[styles.heroBackground, { pointerEvents: 'none' } as any]}>
         <AnimatePresence mode="wait">
           <motion.div
             key={selectedMedia.id}
@@ -272,7 +247,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
           >
             <View 
-              style={StyleSheet.flatten([styles.backdrop, { position: 'relative', width: '100%', height: '100%' }])}
+              style={[styles.backdrop, { position: 'relative', width: '100%', height: '100%' }]}
               className="relative w-full h-full"
             >
               <ImageBackground 
@@ -290,7 +265,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       </View>
 
       <View 
-        style={StyleSheet.flatten([styles.scrollView, styles.scrollContent])} 
+        style={[styles.scrollView, styles.scrollContent]} 
         className="main-scrollview"
       >
         {/* Header */}
@@ -362,10 +337,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
                     // @ts-ignore - for web compatibility
                     onClick={() => handlePlay(selectedMedia)}
                     underlayColor="#f3f4f6"
-                    style={StyleSheet.flatten([
+                    style={[
                       styles.playButton,
                       focusedId === 'hero-play' && styles.buttonFocused
-                    ])}
+                    ]}
                     // @ts-ignore - for web compatibility
                     className="cursor-pointer"
                   >
@@ -382,10 +357,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
                     }}
                     onBlur={() => setIsAutoRotating(true)}
                     underlayColor="rgba(255,255,255,0.3)"
-                    style={StyleSheet.flatten([
+                    style={[
                       styles.infoButton,
                       focusedId === 'hero-info' && styles.buttonFocused
-                    ])}
+                    ]}
                     // @ts-ignore - for web compatibility
                     className="cursor-pointer"
                   >
@@ -459,7 +434,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         onLogout={onLogout}
         allCategories={allCategories}
         hiddenCategoryIds={hiddenCategoryIds}
-        onToggleCategory={handleToggleCategory}
       />
     </View>
   );
@@ -609,7 +583,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   buttonFocused: {
-    transform: [{ scale: 1.05 }],
+    transform: 'scale(1.05)' as any,
     borderWidth: 3,
     borderColor: '#E50914',
   },
@@ -660,14 +634,11 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.05)',
   },
   cardFocused: {
-    transform: [{ scale: 1.08 }],
+    transform: 'scale(1.08)' as any,
     zIndex: 10,
     borderColor: '#E50914',
     borderWidth: 3,
-    shadowColor: '#E50914',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
+    boxShadow: '0 0 20px #E50914' as any,
   },
   cardInner: {
     flex: 1,
