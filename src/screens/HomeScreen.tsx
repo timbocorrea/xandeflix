@@ -17,6 +17,7 @@ import { SettingsModal } from '../components/SettingsModal';
 import { VideoPlayer } from '../components/VideoPlayer';
 import { HeroSection } from '../components/HeroSection';
 import { CategoryRow } from '../components/CategoryRow';
+import LoadingScreen from '../components/LoadingScreen';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -176,6 +177,29 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   return (
     <View style={styles.container}>
+      {/* Loading State Overlay */}
+      <AnimatePresence>
+        {loading && allCategories.length === 0 && (
+          <motion.div
+            key="loader"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.8 }}
+            style={{ 
+              position: 'fixed', 
+              top: 0, 
+              left: 0, 
+              right: 0, 
+              bottom: 0, 
+              zIndex: 9999,
+              backgroundColor: '#050505'
+            }}
+          >
+            <LoadingScreen />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <SideMenu onSelect={handleMenuSelect} activeId={activeFilter} onLogout={onLogout} />
       
       <ScrollView 

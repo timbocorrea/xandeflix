@@ -7,14 +7,17 @@ export const usePlaylist = () => {
   const { setAllCategories, setIsUsingMock } = useStore();
 
   const fetchPlaylist = useCallback(async () => {
-    setLoading(true);
+    const hasData = useStore.getState().allCategories.length > 0;
+    
+    // Only show global loader if we don't have any data yet
+    if (!hasData) setLoading(true);
+    
     const authToken = localStorage.getItem('xandeflix_auth_token') || '';
     let playlistUrl = localStorage.getItem('xandeflix_playlist_url') || '';
 
     try {
-      // 1. Refresh user info to get the latest playlist URL from admin changes
+      // 1. Refresh user info to get the latest playlist URL
       if (authToken) {
-        console.log('[SESSION] Refreshing user data with auth token.');
         const meResponse = await fetch('/api/auth/me', {
           headers: { 'x-auth-token': authToken }
         });
@@ -27,15 +30,13 @@ export const usePlaylist = () => {
         }
       }
 
-      console.log('[API] Fetching playlist for URL:', playlistUrl.substring(0, 50) + '...');
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
-
-      // 2. Fetch the actual M3U content (now with the correct URL)
+      // 2. Fetch the actual M3U content
       const fetchUrl = authToken
         ? '/api/playlist'
         : (playlistUrl ? `/api/playlist?url=${encodeURIComponent(playlistUrl)}` : '/api/playlist');
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // Increased timeout for large lists
 
       const response = await fetch(fetchUrl, {
         signal: controller.signal,
@@ -50,15 +51,16 @@ export const usePlaylist = () => {
       if (Array.isArray(data) && data.length > 0) {
         setAllCategories(data);
         setIsUsingMock(false);
-      } else {
-        console.warn('[API] Empty playlist, using mock data');
+      } else if (!hasData) {
         setAllCategories(MOCK_CATEGORIES);
         setIsUsingMock(true);
       }
     } catch (error) {
       console.error('[API] Error fetching playlist:', error);
-      setAllCategories(MOCK_CATEGORIES);
-      setIsUsingMock(true);
+      if (!hasData) {
+        setAllCategories(MOCK_CATEGORIES);
+        setIsUsingMock(true);
+      }
     } finally {
       setLoading(false);
     }
