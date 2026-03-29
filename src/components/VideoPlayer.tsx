@@ -1,25 +1,47 @@
 import React, { useEffect, useRef } from 'react';
+import mpegts from 'mpegts.js';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
-import 'mux.js'; // Import mux.js for MPEG-TS support
-import { X, Play, ExternalLink } from 'lucide-react';
-import { motion } from 'motion/react';
+import { X, Play, ExternalLink, Layout, Maximize2, Minimize2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface VideoPlayerProps {
   url: string;
   mediaType: string;
   onClose: () => void;
+  isMinimized?: boolean;
+  onToggleMinimize?: () => void;
 }
 
-export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClose }) => {
-  const videoRef = useRef<HTMLDivElement>(null);
+/**
+ * Detects the best playback strategy based on the proxied URL.
+ * - 'mpegts': raw MPEG-TS streams (most IPTV channels)
+ * - 'hls': HLS playlists (.m3u8)
+ * - 'native': MP4 / WebM that browsers handle natively
+ */
+function detectStrategy(proxyUrl: string): 'mpegts' | 'hls' | 'native' {
+  const original = decodeURIComponent(proxyUrl.split('url=')[1] || '').toLowerCase();
+  if (original.includes('.m3u8') || original.includes('output=hls')) return 'hls';
+  if (original.includes('.mp4')) return 'native';
+  // Everything else from IPTV panels (output=mpegts, .ts, etc.) → mpegts.js
+  return 'mpegts';
+}
+
+export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
+  url, 
+  mediaType, 
+  onClose,
+  isMinimized = false,
+  onToggleMinimize
+}) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [retryCount, setRetryCount] = React.useState(0);
   const [diagnostic, setDiagnostic] = React.useState<any>(null);
   const [diagnosing, setDiagnosing] = React.useState(false);
-  const [useNative, setUseNative] = React.useState(false);
+  const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(url));
 
   const runDiagnostic = async () => {
     setDiagnosing(true);
@@ -34,44 +56,124 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClos
     }
   };
 
+  // ── Cleanup on unmount ──
   useEffect(() => {
-    // Make sure Video.js player is only initialized once
-    if (!playerRef.current && videoRef.current) {
-      const videoElement = document.createElement('video');
-      videoElement.className = 'video-js vjs-big-play-centered vjs-theme-city';
-      videoElement.setAttribute('crossorigin', 'anonymous');
-      videoRef.current.appendChild(videoElement);
+    return () => {
+      destroyPlayer();
+    };
+  }, []);
 
-      // Extract original URL to detect type more accurately
-      const originalUrl = decodeURIComponent(url.split('url=')[1] || '').toLowerCase();
-      
-      let type = 'application/x-mpegURL'; // Default to HLS/M3U8
-      
-      if (retryCount === 0) {
-        // First attempt: try to guess based on extension or media type
-        if (originalUrl.includes('.mp4')) type = 'video/mp4';
-        else if (originalUrl.includes('.mkv')) type = 'video/webm'; 
-        else if (originalUrl.includes('.ts') || originalUrl.includes('output=ts')) {
-          type = 'video/mp2t';
-        } else if (originalUrl.includes('.m3u8')) {
-          type = 'application/x-mpegURL';
-        } else if (mediaType === 'movie' || mediaType === 'series') {
-          type = 'video/mp4';
-        }
-      } else if (retryCount === 1) {
-        // Second attempt: try MPEG-TS (very common for IPTV)
-        type = 'video/mp2t';
-      } else if (retryCount === 2) {
-        // Third attempt: try HLS (fallback for everything)
-        type = 'application/x-mpegURL';
-      } else if (retryCount === 3) {
-        // Fourth attempt: try MP4 (last resort)
-        type = 'video/mp4';
+  function destroyPlayer() {
+    if (playerRef.current) {
+      try {
+        if (playerRef.current.destroy) playerRef.current.destroy(); // mpegts
+        else if (playerRef.current.dispose) playerRef.current.dispose(); // videojs
+      } catch (e) { /* ignore */ }
+      playerRef.current = null;
+    }
+  }
+
+  // ── Main player initialization ──
+  useEffect(() => {
+    destroyPlayer();
+    setLoading(true);
+    setError(null);
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    console.log(`[Player] Strategy: ${strategy} for ${url.substring(0, 80)}...`);
+
+    if (strategy === 'mpegts') {
+      initMpegTs(video);
+    } else if (strategy === 'hls') {
+      initHls(video);
+    } else {
+      initNative(video);
+    }
+
+    // Keyboard handler
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Backspace') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [url, strategy]);
+
+  // ── mpegts.js for raw MPEG-TS streams ──
+  function initMpegTs(video: HTMLVideoElement) {
+    if (!mpegts.isSupported()) {
+      console.warn('[Player] mpegts.js not supported, falling back to HLS');
+      setStrategy('hls');
+      return;
+    }
+
+    // Web Workers can't resolve relative URLs, so we need absolute
+    const absoluteUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+
+    const player = mpegts.createPlayer({
+      type: 'mpegts',
+      isLive: mediaType === 'live',
+      url: absoluteUrl,
+    }, {
+      enableWorker: true,
+      enableStashBuffer: true,
+      stashInitialSize: 1024 * 128, // 128KB initial buffer
+      liveBufferLatencyChasing: mediaType === 'live',
+      liveBufferLatencyMaxLatency: 10, // More forgiving latency (10s)
+      liveBufferLatencyMinRemain: 1, // Minimum 1s stay in buffer
+      autoCleanupSourceBuffer: true,
+      autoCleanupMaxBackwardDuration: 60,
+      autoCleanupMinBackwardDuration: 30,
+    });
+
+    player.attachMediaElement(video);
+    player.load();
+    const playResult = player.play();
+    if (playResult && typeof playResult.catch === 'function') {
+      playResult.catch(() => { /* autoplay blocked, user will click */ });
+    }
+
+    player.on(mpegts.Events.ERROR, (errorType: any, errorDetail: any, errorInfo: any) => {
+      console.error('[mpegts] Error:', errorType, errorDetail, errorInfo);
+      // Try HLS as fallback
+      if (strategy === 'mpegts') {
+        console.log('[Player] mpegts failed, trying HLS fallback...');
+        destroyPlayer();
+        setStrategy('hls');
       }
+    });
 
-      console.log(`Initializing player (Attempt ${retryCount + 1}) with type:`, type);
+    player.on(mpegts.Events.LOADING_COMPLETE, () => {
+      console.log('[mpegts] Loading complete');
+    });
 
-      const player = playerRef.current = videojs(videoElement, {
+    video.addEventListener('playing', () => setLoading(false));
+    video.addEventListener('waiting', () => setLoading(true));
+    video.addEventListener('canplay', () => setLoading(false));
+    video.addEventListener('error', () => {
+      console.error('[mpegts] Video element error');
+      if (strategy === 'mpegts') {
+        destroyPlayer();
+        setStrategy('hls');
+      }
+    });
+
+    playerRef.current = player;
+  }
+
+  // ── Video.js for HLS (.m3u8) streams ──
+  function initHls(video: HTMLVideoElement) {
+    // Video.js needs a fresh element inside a container
+    if (containerRef.current) {
+      // Clear existing content and hide the shared <video>
+      video.style.display = 'none';
+      const vjsVideo = document.createElement('video');
+      vjsVideo.className = 'video-js vjs-big-play-centered vjs-theme-city';
+      vjsVideo.setAttribute('crossorigin', 'anonymous');
+      containerRef.current.appendChild(vjsVideo);
+
+      const player = videojs(vjsVideo, {
         autoplay: true,
         controls: true,
         responsive: true,
@@ -81,16 +183,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClos
           vhs: {
             overrideNative: true,
             enableLowInitialPlaylist: true,
-            fastStart: true
+            fastStart: true,
           },
           nativeVideoTracks: false,
           nativeAudioTracks: false,
-          nativeTextTracks: false
+          nativeTextTracks: false,
         },
-        sources: [{
-          src: url,
-          type: type
-        }]
+        sources: [{ src: url, type: 'application/x-mpegURL' }],
       }, () => {
         setLoading(false);
       });
@@ -99,72 +198,109 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClos
       player.on('playing', () => setLoading(false));
       player.on('error', () => {
         const err = player.error();
-        console.error('VideoJS Error:', err ? err.message : 'Unknown error');
-        
-        if (retryCount < 3) {
-          // Try next fallback
-          setRetryCount(prev => prev + 1);
+        console.error('[VideoJS] Error:', err?.message);
+        // Try native as last resort
+        if (strategy === 'hls') {
           player.dispose();
           playerRef.current = null;
-          if (videoRef.current) videoRef.current.innerHTML = '';
-        } else {
-          let message = 'O vídeo não pôde ser carregado (servidor ou formato incompatível).';
-          if (err) {
-            switch (err.code) {
-              case 1: message = 'O carregamento foi abortado.'; break;
-              case 2: message = 'Erro de rede. Verifique sua conexão.'; break;
-              case 3: message = 'Erro ao decodificar o vídeo. Formato incompatível.'; break;
-              case 4: message = 'O vídeo não pôde ser carregado (servidor ou formato incompatível).'; break;
-            }
-          }
-          setError(message);
-          setLoading(false);
-          runDiagnostic(); // Automatically run diagnostic to show the real error
+          if (containerRef.current) containerRef.current.innerHTML = '';
+          video.style.display = '';
+          setStrategy('native');
         }
       });
 
-      // Handle Escape key to close
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape' || e.key === 'Backspace') {
-          onClose();
-        }
-      };
-      window.addEventListener('keydown', handleKeyDown);
-      return () => {
-        window.removeEventListener('keydown', handleKeyDown);
-      };
+      playerRef.current = player;
     }
-  }, [url, onClose, retryCount, mediaType]);
+  }
 
-  // Dispose the player on unmount
-  useEffect(() => {
-    const player = playerRef.current;
-    return () => {
-      if (player && !player.isDisposed()) {
-        player.dispose();
-        playerRef.current = null;
+  // ── Native <video> for MP4/WebM or last-resort ──
+  function initNative(video: HTMLVideoElement) {
+    video.style.display = '';
+    video.src = url;
+    video.autoplay = true;
+    video.controls = true;
+
+    const onPlaying = () => setLoading(false);
+    const onWaiting = () => setLoading(true);
+    const onCanPlay = () => setLoading(false);
+    const onError = () => {
+      console.error('[Native] Video element error');
+      setError('O vídeo não pôde ser carregado. O servidor ou formato é incompatível.');
+      setLoading(false);
+      runDiagnostic();
+    };
+
+    video.addEventListener('playing', onPlaying);
+    video.addEventListener('waiting', onWaiting);
+    video.addEventListener('canplay', onCanPlay);
+    video.addEventListener('error', onError);
+
+    video.load();
+    video.play().catch(() => { /* autoplay blocked */ });
+
+    // Store cleanup reference
+    playerRef.current = {
+      destroy: () => {
+        video.removeEventListener('playing', onPlaying);
+        video.removeEventListener('waiting', onWaiting);
+        video.removeEventListener('canplay', onCanPlay);
+        video.removeEventListener('error', onError);
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
       }
     };
-  }, [playerRef]);
+  }
 
   return (
-    <motion.div 
+    <motion.div
+      key={url}
       initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 1.05 }}
-      className="fixed inset-0 z-[100] bg-black flex items-center justify-center overflow-hidden"
+      animate={{ 
+        opacity: 1, 
+        scale: 1,
+        width: isMinimized ? (window.innerWidth < 768 ? 240 : 480) : '100vw',
+        height: isMinimized ? (window.innerWidth < 768 ? 135 : 270) : '100vh',
+        bottom: isMinimized ? 30 : 0,
+        right: isMinimized ? 30 : 0,
+        top: isMinimized ? 'auto' : 0,
+        left: isMinimized ? 'auto' : 0,
+        borderRadius: isMinimized ? 20 : 0,
+        aspectRatio: isMinimized ? '16/9' : 'auto'
+      }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      className={`fixed z-[100] bg-black flex items-center justify-center overflow-hidden shadow-2xl ${
+        isMinimized ? 'border-2 border-white/20' : ''
+      }`}
     >
-      <button 
-        onClick={onClose}
-        className="absolute top-10 right-10 z-[110] p-4 backdrop-blur-md bg-white/5 hover:bg-white/10 border border-white/10 rounded-full transition-all duration-300 group"
-      >
-        <X className="text-white w-8 h-8 group-hover:rotate-90 transition-transform duration-300" />
-      </button>
+      <div className="absolute top-4 right-4 z-[110] flex gap-3">
+        {onToggleMinimize && (
+          <button 
+            onClick={onToggleMinimize}
+            className="p-3 backdrop-blur-xl bg-black/40 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
+            title={isMinimized ? "Maximizar" : "Navegar (Minimizar)"}
+          >
+            {isMinimized ? (
+              <Maximize2 className="text-white w-6 h-6 group-hover:scale-110 transition-transform" />
+            ) : (
+              <Layout className="text-white w-6 h-6 group-hover:scale-110 transition-transform" />
+            )}
+          </button>
+        )}
+        <button 
+          onClick={onClose}
+          className="p-3 backdrop-blur-xl bg-black/40 hover:bg-red-500/20 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
+          title="Fechar"
+        >
+          <X className="text-white w-6 h-6 group-hover:rotate-90 transition-transform duration-300" />
+        </button>
+      </div>
 
       {loading && !error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-[105] bg-black/50">
           <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin mb-4" />
           <p className="text-white font-medium">Carregando conteúdo...</p>
+          <p className="text-gray-500 text-sm mt-2">Modo: {strategy.toUpperCase()}</p>
         </div>
       )}
 
@@ -184,10 +320,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClos
               <p className="text-gray-300 mt-1">Mensagem: {diagnostic.message}</p>
               {diagnostic.error && <p className="text-red-400 mt-1">Erro: {diagnostic.error}</p>}
               <p className="text-gray-500 mt-2">Duração: {diagnostic.duration}</p>
-              <div className="mt-2 pt-2 border-t border-white/5">
-                <p className="text-gray-500">Headers de Resposta:</p>
-                <pre className="text-gray-400 mt-1">{JSON.stringify(diagnostic.headers, null, 2)}</pre>
-              </div>
             </div>
           )}
 
@@ -195,9 +327,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClos
             <button 
               onClick={() => {
                 setError(null);
-                setRetryCount(0);
                 setLoading(true);
                 setDiagnostic(null);
+                setStrategy(detectStrategy(url));
               }}
               className="px-6 py-3 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition-colors"
             >
@@ -209,16 +341,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClos
               className="px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
               {diagnosing ? 'Diagnosticando...' : 'Diagnosticar Problema'}
-            </button>
-            <button 
-              onClick={() => {
-                setUseNative(true);
-                setError(null);
-                setLoading(false);
-              }}
-              className="px-6 py-3 bg-amber-600 text-white font-bold rounded-lg hover:bg-amber-700 transition-colors"
-            >
-              Modo de Compatibilidade
             </button>
             <button 
               onClick={() => {
@@ -236,34 +358,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ url, mediaType, onClos
             >
               Voltar
             </button>
-            <a 
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-6 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
-            >
-              <Play className="w-5 h-5" />
-              Abrir em Nova Aba
-            </a>
           </div>
         </div>
       )}
 
-      <div data-vjs-player className="w-full h-full">
-        {useNative ? (
-          <video 
-            src={url} 
-            controls 
-            autoPlay 
-            className="w-full h-full"
-            onError={() => {
-              console.error('Native Video Error');
-              setError('Falha no Modo Nativo. O formato pode ser incompatível com o navegador.');
-            }}
-          />
-        ) : (
-          <div ref={videoRef} className="w-full h-full" />
-        )}
+      <div ref={containerRef} className="w-full h-full">
+        <video
+          ref={videoRef}
+          className="w-full h-full"
+          crossOrigin="anonymous"
+          playsInline
+        />
       </div>
     </motion.div>
   );

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "usr_11jk40m",
+    "name": "alexandre",
+    "username": "alexandre",
+    "password": "123456",
+    "playlistUrl": "http://nt.chavedelta.site/get.php?username=212305365&password=678335832&type=m3u_plus&output=hls",
+    "isBlocked": false,
+    "lastAccess": "2026-03-25T21:28:34.775Z"
+  },
+  {
+    "id": "usr_5id6z62",
+    "name": "janaina",
+    "username": "janaina",
+    "password": "123456",
+    "playlistUrl": "http://dnsd1.space/get.php?username=611791144&password=442588425&type=m3u_plus&output=mpegts",
+    "isBlocked": false,
+    "lastAccess": "2026-03-28T21:59:28.637Z"
+  },
+  {
+    "id": "usr_mgsz5re",
+    "name": "teste",
+    "username": "teste",
+    "password": "123456",
+    "playlistUrl": "https://real.cdnbr.site/get.php?username=852492282&password=383858949&type=m3u_plus&output=mpegts",
+    "isBlocked": false,
+    "lastAccess": "2026-03-28T23:49:10.762Z"
+  }
+]

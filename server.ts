@@ -28,6 +28,8 @@ dotenv.config();
  */
 const authorizedDomains = new Set<string>(['dnsd1.space', 'localhost', '127.0.0.1']);
 const playlistCache = new CacheManager<any>(30); // 30 minutes cache
+const pendingRequests = new Map<string, Promise<any>>();
+
 
 // Seed whitelist from environment
 if (process.env.PLAYLIST_URL) {
@@ -45,7 +47,20 @@ async function startServer() {
 
   // Apply base middlewares
   app.use(cors());
-  app.use(compression()); // Habilitar Gzip/Brotli para respostas grandes
+  
+  // API Route: Streaming Proxy - MUST BE ABOVE COMPRESSION
+  // We don't want to compress media streams as it adds overhead and breaks chunked encoding playback
+  app.all('/api/stream', (req, res) => {
+    req.setTimeout(0);
+    res.setTimeout(0);
+    const streamUrl = req.query.url as string;
+    if (!streamUrl) return res.status(400).send('URL is required');
+
+    // Use StreamProxyService
+    StreamProxyService.proxy(streamUrl, req, res, authorizedDomains);
+  });
+
+  app.use(compression()); 
   app.use(securityHeadersMiddleware);
 
   /**
@@ -58,43 +73,79 @@ async function startServer() {
       return res.status(400).json({ error: 'Playlist URL not provided.' });
     }
 
-    // Attempt to serve from cache
+    // Attempt to serve from cache or pending request queue
     const cachedData = playlistCache.get(playlistUrl);
     if (cachedData) return res.json(cachedData);
     
-    try {
-      console.log('[API] Fetching playlist:', playlistUrl.substring(0, 50) + '...');
+    if (pendingRequests.has(playlistUrl)) {
+      console.log('[API] Coalescing request for URL:', playlistUrl.substring(0, 50) + '...');
+      try {
+        const data = await pendingRequests.get(playlistUrl);
+        return res.json(data);
+      } catch (error: any) {
+        return res.status(500).json({ error: 'Failed in previous attempt', details: error.message });
+      }
+    }
+    
+    // Create new fetch promise
+      const fetchPromise = (async () => {
+      console.log(`[API] Fetching playlist for user: ${playlistUrl.substring(0, 50)}...`);
       
       const response = await axios.get(playlistUrl, { 
-        timeout: 45000, // Reduced from 60s for better user experience
+        timeout: 45000,
+        responseType: 'text', // Force response as text for M3U content
         headers: {
-          'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
-          'Accept': '*/*'
+          'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', // Many IPTV panels require VLC UA
+          'Accept': '*/*',
+          'Accept-Encoding': 'gzip, deflate, br'
         },
-        validateStatus: () => true
+        validateStatus: () => true,
+        maxRedirects: 5,
       });
       
+      console.log(`[API] Playlist server responded with status: ${response.status}`);
+
       if (response.status !== 200) {
-        return res.status(response.status).json({ 
-          error: 'Upstream server error', 
-          status: response.status 
-        });
+        throw new Error(`Upstream server error: ${response.status} ${response.statusText || ''}`);
       }
 
       if (!response.data || typeof response.data !== 'string') {
-        return res.status(500).json({ error: 'Invalid playlist content' });
+        throw new Error('Invalid or empty playlist content');
+      }
+
+      // Check for common M3U header to verify content
+      if (!response.data.includes('#EXTM3U')) {
+        console.warn('[API] Warning: Playlist content does not start with #EXTM3U');
+        // We try to parse it anyway, but log the warning
       }
 
       // Delegate parsing to parser service
       const categories = M3UParserService.parse(response.data, (url) => {
-        try { authorizedDomains.add(new URL(url).hostname); } catch (e) {}
+        try { 
+          const hostname = new URL(url).hostname;
+          if (!authorizedDomains.has(hostname)) {
+            authorizedDomains.add(hostname);
+            console.log(`[SECURITY] Whitelisted new domain: ${hostname}`);
+          }
+        } catch (e) {}
       });
 
+      console.log(`[API] Successfully parsed ${categories.length} categories.`);
+      
       // Update cache
       playlistCache.set(playlistUrl, categories);
+      return categories;
+    })();
 
+    // Store the promise in the pending queue
+    pendingRequests.set(playlistUrl, fetchPromise);
+
+    try {
+      const categories = await fetchPromise;
+      pendingRequests.delete(playlistUrl);
       res.json(categories);
     } catch (error: any) {
+      pendingRequests.delete(playlistUrl);
       console.error('[API] Playlist error:', error.message);
       res.status(500).json({ error: 'Failed to fetch playlist', details: error.message });
     }
@@ -139,6 +190,38 @@ async function startServer() {
   });
 
   /**
+   * API Route: Authentication
+   */
+  app.post('/api/auth/login', express.json(), async (req, res) => {
+    try {
+      const { identifier, token } = req.body;
+      if (!identifier) return res.status(400).json({ error: 'Identifier is required' });
+
+      const result = await AdminService.authenticate(identifier, token);
+      if (result) {
+        res.json(result);
+      } else {
+        res.status(401).json({ error: 'Credenciais inválidas ou acesso bloqueado.' });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/auth/me', async (req, res) => {
+    try {
+      const userId = req.query.id as string;
+      if (!userId) return res.status(400).send('ID is required');
+      const users = await AdminService.listUsers();
+      const user = users.find(u => u.id === userId && !u.isBlocked);
+      if (user) res.json(user);
+      else res.status(404).send('User not found');
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
    * Admin API Routes
    */
   app.get('/api/admin/users', adminAuthMiddleware, async (req, res) => {
@@ -152,8 +235,8 @@ async function startServer() {
 
   app.post('/api/admin/user/add', adminAuthMiddleware, express.json(), async (req, res) => {
     try {
-      const { name, playlistUrl } = req.body;
-      const user = await AdminService.addUser(name, playlistUrl);
+      const { name, playlistUrl, username, password } = req.body;
+      const user = await AdminService.addUser(name, playlistUrl, username, password);
       res.status(201).json(user);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -171,10 +254,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/user/playlist', adminAuthMiddleware, express.json(), async (req, res) => {
+  app.post('/api/admin/user/update', adminAuthMiddleware, express.json(), async (req, res) => {
     try {
-      const { userId, playlistUrl } = req.body;
-      const success = await AdminService.updateUserPlaylist(userId, playlistUrl);
+      const { userId, ...data } = req.body;
+      const success = await AdminService.updateUser(userId, data);
       if (success) res.sendStatus(200);
       else res.status(404).send('User not found');
     } catch (e: any) {
@@ -190,17 +273,6 @@ async function startServer() {
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
-  });
-
-  /**
-   * API Route: Streaming Proxy (Chunked with pipe)
-   */
-  app.all('/api/stream', (req, res) => {
-    const streamUrl = req.query.url as string;
-    if (!streamUrl) return res.status(400).send('URL is required');
-
-    // Delegate streaming to proxy service
-    StreamProxyService.proxy(streamUrl, req, res, authorizedDomains);
   });
 
   /**

@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import axios from 'axios';
 import * as http from 'http';
 import * as https from 'https';
 
@@ -17,97 +18,97 @@ export class StreamProxyService {
         return;
       }
 
+      console.log(`[PROXY] Streaming (Axios): ${streamUrl.substring(0, 100)}...`);
+
       const headers: any = {
         'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
         'Accept': '*/*',
-        'Connection': 'close',
-        'Host': urlObj.host,
+        'Connection': 'keep-alive',
       };
 
       if (req.headers.range) {
         headers['Range'] = req.headers.range;
       }
 
-      console.log(`[PROXY] Streaming: ${streamUrl.substring(0, 100)}...`);
-
-      const protocol = urlObj.protocol === 'https:' ? https : http;
-      
-      const requestOptions = {
+      const response = await axios.request({
+        url: streamUrl,
         method: req.method,
-        headers: headers,
+        headers,
+        responseType: 'stream',
         timeout: 60000,
-        rejectUnauthorized: true // Enforce SSL security
-      };
+        maxRedirects: 10,
+        validateStatus: () => true,
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        httpAgent: new http.Agent({ keepAlive: true }),
+      });
 
-      const proxyReq = protocol.request(streamUrl, requestOptions, (proxyRes) => {
-        // Handle Redirects
-        if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-          const redirectUrl = new URL(proxyRes.headers.location, streamUrl).toString();
-          console.log(`[PROXY] Redirecting to: ${redirectUrl.substring(0, 100)}...`);
-          res.redirect(`/api/stream?url=${encodeURIComponent(redirectUrl)}`);
-          return;
-        }
+      // Forward status code
+      res.status(response.status);
 
-        // Set standard and CORS headers
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Range, User-Agent, Accept');
-        res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
+      // Forward essential headers
+      const headersToForward = [
+        'content-type', 'content-length', 'content-range', 'accept-ranges', 
+        'cache-control', 'expires', 'last-modified', 'etag'
+      ];
 
-        const headersToForward = [
-          'content-type', 'content-length', 'content-range', 'accept-ranges', 
-          'cache-control', 'expires', 'last-modified', 'etag'
-        ];
-
-        headersToForward.forEach(header => {
-          if (proxyRes.headers[header]) {
-            res.setHeader(header, proxyRes.headers[header] as string);
-          }
-        });
-
-        // Content detection
-        const urlLower = streamUrl.toLowerCase();
-        const isTS = urlLower.includes('.ts') || urlLower.includes('output=ts') || 
-                     urlLower.includes('output=mpegts') ||
-                     (proxyRes.headers['content-type'] && proxyRes.headers['content-type'].includes('video/mp2t'));
-
-        const isHLS = urlLower.includes('.m3u8') || urlLower.includes('output=hls') ||
-                      (proxyRes.headers['content-type'] && proxyRes.headers['content-type'].includes('application/x-mpegURL'));
-
-        if (isTS) res.setHeader('Content-Type', 'video/mp2t');
-        else if (isHLS) res.setHeader('Content-Type', 'application/x-mpegURL');
-
-        res.status(proxyRes.statusCode || 200);
-
-        if (req.method === 'HEAD') {
-          res.end();
-        } else if (isHLS && req.method === 'GET') {
-          this.handleHLSRewrite(proxyRes, res, streamUrl);
-        } else {
-          proxyRes.pipe(res);
+      headersToForward.forEach(header => {
+        if (response.headers[header]) {
+          res.setHeader(header, response.headers[header] as string);
         }
       });
 
-      proxyReq.on('timeout', () => {
-        console.error('[PROXY] Request timed out for:', streamUrl);
-        proxyReq.destroy();
-        if (!res.headersSent) res.status(504).send('IPTV Server Timeout');
-      });
-
-      proxyReq.on('error', (err: any) => {
-        const errorMsg = this.handleError(err, streamUrl);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Proxy Error', message: errorMsg, code: err.code });
+      // CORS & Cache
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      
+      // For live streams, we don't want browsers to buffer too much locally
+      const isLive = streamUrl.includes('live') || streamUrl.includes('output=ts') || streamUrl.includes('output=mpegts');
+      if (isLive) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        // Remove Content-Length if it looks like an infinite stream to prevent issues
+        if (!response.headers['content-length'] || parseInt(response.headers['content-length'] as string) > 1024 * 1024 * 1024) {
+          res.removeHeader('Content-Length');
         }
-      });
-
-      if (req.method !== 'HEAD') {
-        req.pipe(proxyReq);
-      } else {
-        proxyReq.end();
       }
 
-      req.on('close', () => proxyReq.destroy());
+      // Detect Content Type overrides
+      const urlLower = streamUrl.toLowerCase();
+      const isTS = urlLower.includes('.ts') || urlLower.includes('output=ts') || 
+                   urlLower.includes('output=mpegts') ||
+                   (response.headers['content-type'] && response.headers['content-type'].includes('video/mp2t'));
+
+      const isHLS = urlLower.includes('.m3u8') || urlLower.includes('output=hls') ||
+                    (response.headers['content-type'] && response.headers['content-type'].includes('application/x-mpegURL'));
+
+      if (isTS) res.setHeader('Content-Type', 'video/mp2t');
+      else if (isHLS) res.setHeader('Content-Type', 'application/x-mpegURL');
+
+      if (req.method === 'HEAD') {
+        res.end();
+      } else if (isHLS) {
+        // HLS Rewrite
+        let body = '';
+        response.data.on('data', (chunk: any) => body += chunk.toString());
+        response.data.on('end', () => {
+          const rewritten = body.split('\n').map(line => {
+             const trimmed = line.trim();
+             if (trimmed && !trimmed.startsWith('#')) {
+               try { return `/api/stream?url=${encodeURIComponent(new URL(trimmed, streamUrl).toString())}`; } 
+               catch { return line; }
+             }
+             return line;
+          }).join('\n');
+          res.send(rewritten);
+        });
+      } else {
+        response.data.pipe(res);
+      }
+
+      req.on('close', () => {
+        if (response.data && response.data.destroy) response.data.destroy();
+      });
 
     } catch (error: any) {
       console.error('[PROXY] Setup error:', error.message);

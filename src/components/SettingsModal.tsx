@@ -65,7 +65,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Link size={24} color="#E50914" className="mr-3" />
+              <span style={{ marginRight: 12 }}><Link size={24} color="#E50914" /></span>
               <Text style={styles.title}>Configurações</Text>
             </View>
             <TouchableHighlight
@@ -74,7 +74,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               style={styles.closeButton}
             >
               <View>
-                <X size={24} color="white" />
+                <span><X size={24} color="white" /></span>
               </View>
             </TouchableHighlight>
           </View>
@@ -87,7 +87,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               style={[styles.tab, activeTab === 'general' && styles.activeTab]}
             >
               <View style={styles.tabInner}>
-                <Link size={18} color={activeTab === 'general' ? '#E50914' : 'rgba(255,255,255,0.5)'} />
+                <span><Link size={18} color={activeTab === 'general' ? '#E50914' : 'rgba(255,255,255,0.5)'} /></span>
                 <Text style={[styles.tabText, activeTab === 'general' && styles.activeTabText]}>Sessão</Text>
               </View>
             </TouchableHighlight>
@@ -97,7 +97,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               style={[styles.tab, activeTab === 'categories' && styles.activeTab]}
             >
               <View style={styles.tabInner}>
-                <List size={18} color={activeTab === 'categories' ? '#E50914' : 'rgba(255,255,255,0.5)'} />
+                <span><List size={18} color={activeTab === 'categories' ? '#E50914' : 'rgba(255,255,255,0.5)'} /></span>
                 <Text style={[styles.tabText, activeTab === 'categories' && styles.activeTabText]}>Categorias</Text>
               </View>
             </TouchableHighlight>
@@ -131,7 +131,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     style={styles.logoutButton}
                   >
                     <View style={styles.buttonInner}>
-                      <RotateCcw size={18} color="#ef4444" className="mr-2" />
+                      <span style={{ marginRight: 8 }}><RotateCcw size={18} color="#ef4444" /></span>
                       <Text style={[styles.buttonText, { color: '#ef4444' }]}>Terminar Sessão</Text>
                     </View>
                   </TouchableHighlight>
@@ -158,7 +158,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             styles.checkbox,
                             !isHidden && styles.checkboxChecked
                           ]}>
-                            {!isHidden && <Check size={14} color="white" />}
+                            {!isHidden && <span><Check size={14} color="white" /></span>}
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={[styles.categoryName, isHidden && styles.categoryNameHidden]}>
@@ -181,7 +181,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     style={styles.saveButton}
                   >
                     <View style={styles.buttonInner}>
-                      <Save size={18} color="white" className="mr-2" />
+                      <span style={{ marginRight: 8 }}><Save size={18} color="white" /></span>
                       <Text style={styles.buttonText}>Confirmar Alterações</Text>
                     </View>
                   </TouchableHighlight>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, StyleSheet, ScrollView, Animated, Dimensions, TouchableHighlight, Text } from 'react-native';
 import { RotateCcw } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 // Common types & Stores
 import { Category, Media } from '../types';
@@ -42,37 +43,106 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
   const [videoType, setVideoType] = useState<'live' | 'movie' | 'series' | null>(null);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
+  const [isPlayerMinimized, setIsPlayerMinimized] = useState(false);
   
   const scrollRef = useRef<ScrollView>(null);
-
+  
   // Initial Data Fetch
   useEffect(() => {
     fetchPlaylist();
   }, [fetchPlaylist]);
 
-  // Handle media selection/auto-rotation
-  useEffect(() => {
-    if (allCategories.length > 0 && !selectedMedia) {
-      const homeCat = allCategories.find(c => c.items.length > 0);
-      if (homeCat) setSelectedMedia(homeCat.items[0]);
-    }
-  }, [allCategories, selectedMedia, setSelectedMedia]);
+  // Handle play action
+  const handlePlay = useCallback((media: Media) => {
+    setActiveVideoUrl(media.videoUrl);
+    setVideoType(media.type);
+    setIsPlayerMinimized(false); // Sempre abre em tela cheia ao clicar
+    setIsAutoRotating(false);
+  }, []);
 
-  // Auto-rotation logic
+  const handleToggleMinimize = useCallback(() => {
+    setIsPlayerMinimized(prev => !prev);
+  }, []);
+
+  // Handle media selection/auto-rotation
+  // Build a pool of diverse items for the hero slideshow
+  const [heroPool, setHeroPool] = useState<Media[]>([]);
+  const [heroIndex, setHeroIndex] = useState(0);
+
   useEffect(() => {
-    if (!isAutoRotating || activeFilter !== 'home' || allCategories.length === 0) return;
+    if (allCategories.length === 0) return;
+    
+    // Filter source categories based on the current context
+    let sourceCats = allCategories;
+    
+    // For specific tabs, only show content of that type in the slides
+    if (activeFilter !== 'home' && activeFilter !== 'all' && activeFilter !== 'search' && activeFilter !== 'mylist') {
+      sourceCats = allCategories.filter(cat => cat.type === activeFilter);
+    }
+    
+    // Pick 1-2 items from each source category, preferring those with unique thumbnails
+    const pool: Media[] = [];
+    const seenThumbs = new Set<string>();
+    
+    // Priority 1: High quality unique posters
+    for (const cat of sourceCats) {
+      let added = 0;
+      for (const item of cat.items) {
+        if (added >= 2) break;
+        if (item.thumbnail.includes('unsplash.com') || item.thumbnail.includes('picsum.photos')) continue;
+        if (seenThumbs.has(item.thumbnail)) continue;
+        seenThumbs.add(item.thumbnail);
+        pool.push(item);
+        added++;
+        if (pool.length >= 15) break;
+      }
+      if (pool.length >= 15) break;
+    }
+    
+    // Priority 2: Fill remains
+    if (pool.length < 5) {
+      for (const cat of sourceCats) {
+        for (const item of cat.items) {
+          if (pool.length >= 15) break;
+          if (!pool.find(p => p.id === item.id)) {
+            pool.push(item);
+          }
+        }
+      }
+    }
+    
+    // Shuffle for variety
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    
+    const finalPool = pool.slice(0, 15);
+    setHeroPool(finalPool);
+    setHeroIndex(0);
+    
+    // Crucial: Update the current display media when the tab changes
+    if (finalPool.length > 0) {
+      setSelectedMedia(finalPool[0]);
+    } else {
+      setSelectedMedia(null);
+    }
+  }, [allCategories, activeFilter, setSelectedMedia]);
+
+  // Auto-rotation with fade transition
+  useEffect(() => {
+    if (!isAutoRotating || heroPool.length === 0) return;
 
     const interval = setInterval(() => {
-      const firstItems = allCategories.flatMap(c => c.items).slice(0, 10);
-      if (firstItems.length === 0) return;
-      
-      const currentIndex = firstItems.findIndex(m => m.id === selectedMedia?.id);
-      const nextIndex = (currentIndex + 1) % firstItems.length;
-      setSelectedMedia(firstItems[nextIndex]);
-    }, 12000);
+      setHeroIndex(prev => {
+        const next = (prev + 1) % heroPool.length;
+        setSelectedMedia(heroPool[next]);
+        return next;
+      });
+    }, 8000); // 8 seconds per slide (Netflix-like pacing)
 
     return () => clearInterval(interval);
-  }, [isAutoRotating, activeFilter, allCategories, selectedMedia, setSelectedMedia]);
+  }, [isAutoRotating, heroPool, setSelectedMedia]);
 
   /**
    * Focus Handlers
@@ -91,11 +161,6 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   /**
    * Action Handlers
    */
-  const handlePlay = useCallback((media: Media) => {
-    setActiveVideoUrl(media.videoUrl);
-    setVideoType(media.type);
-  }, []);
-
   const handleMenuSelect = useCallback((filter: string) => {
     if (filter === 'admin') {
       useStore.getState().setIsAdminMode(true);
@@ -119,28 +184,6 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header Branding */}
-        <View style={styles.header}>
-          <Text style={styles.logo}>XANDEFLIX</Text>
-          {isUsingMock && (
-            <View style={styles.mockControls}>
-              <View style={styles.mockBadge}>
-                <Text style={styles.mockBadgeText}>MODO DEMO: LISTA NÃO CARREGADA</Text>
-              </View>
-              <TouchableHighlight
-                onPress={() => fetchPlaylist()}
-                underlayColor="rgba(255,255,255,0.1)"
-                style={styles.retryButton}
-              >
-                <View style={styles.retryInner}>
-                  <RotateCcw size={14} color="white" />
-                  <Text style={styles.retryText}>Tentar Novamente</Text>
-                </View>
-              </TouchableHighlight>
-            </View>
-          )}
-        </View>
-
         {/* Cinematic Hero */}
         <HeroSection 
           media={selectedMedia}
@@ -172,15 +215,41 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         </View>
       </ScrollView>
 
+      {/* Header Branding - Overlays the ScrollView */}
+      <View style={styles.header}>
+        <Text style={styles.logo}>XANDEFLIX</Text>
+        {isUsingMock && (
+          <View style={styles.mockControls}>
+            <View style={styles.mockBadge}>
+              <Text style={styles.mockBadgeText}>MODO DEMO: LISTA NÃO CARREGADA</Text>
+            </View>
+            <TouchableHighlight
+              onPress={() => fetchPlaylist()}
+              underlayColor="rgba(255,255,255,0.1)"
+              style={styles.retryButton}
+            >
+              <View style={styles.retryInner}>
+                <span><RotateCcw size={14} color="white" /></span>
+                <Text style={styles.retryText}>Tentar Novamente</Text>
+              </View>
+            </TouchableHighlight>
+          </View>
+        )}
+      </View>
+
       {/* Overlays */}
-      {activeVideoUrl && (
-        <VideoPlayer 
-          key={activeVideoUrl}
-          url={activeVideoUrl} 
-          mediaType={videoType || 'live'}
-          onClose={() => setActiveVideoUrl(null)} 
-        />
-      )}
+      <AnimatePresence>
+        {activeVideoUrl && (
+          <VideoPlayer 
+            key={activeVideoUrl}
+            url={activeVideoUrl} 
+            mediaType={videoType || 'live'}
+            onClose={() => setActiveVideoUrl(null)}
+            isMinimized={isPlayerMinimized}
+            onToggleMinimize={handleToggleMinimize}
+          />
+        )}
+      </AnimatePresence>
 
       <SettingsModal
         isVisible={isSettingsVisible}
@@ -206,16 +275,24 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingLeft: 120, // Space for SideMenu
     paddingRight: 60,
+    paddingTop: 0,
     paddingBottom: 100,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     height: 120,
     paddingTop: 40,
+    paddingLeft: 120, // Align with side menu icons
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
     zIndex: 100,
-  },
+    // Add a delicate gradient top-to-bottom for readability
+    backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 10%, transparent 100%)',
+  } as any,
   logo: {
     fontSize: 56,
     fontWeight: '900',
@@ -261,7 +338,8 @@ const styles = StyleSheet.create({
     fontFamily: 'Outfit',
   },
   categoriesContainer: {
-    marginTop: -80, // Negative overlap with hero for better flow
+    marginTop: -40, // Reduced overlap to increase distance from hero
+    zIndex: 20,
   },
   emptyContainer: {
     padding: 100, 

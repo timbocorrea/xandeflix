@@ -23,19 +23,31 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
   focusedId, 
   onFocus 
 }) => {
+  const [bgError, setBgError] = useState(false);
+
+  // Reset error state when media changes
+  useEffect(() => {
+    setBgError(false);
+  }, [media?.id]);
+
   if (!media) return null;
+
+  const fallbackBg = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=1920&auto=format&fit=crop`;
 
   return (
     <View style={styles.container}>
-      {/* Hero Background */}
-      <View style={[styles.heroBackground, { pointerEvents: 'none' } as any]}>
+      {/* Hero Background with Ken Burns effect */}
+      <View style={[styles.heroBackground, { pointerEvents: 'none' as const }]}>
         <AnimatePresence mode="wait">
           <motion.div
             key={media.id}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
+            initial={{ opacity: 0, scale: 1.05 }}
+            animate={{ opacity: 1, scale: 1.0 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.8 }}
+            transition={{ 
+              opacity: { duration: 1.2, ease: 'easeInOut' },
+              scale: { duration: 8, ease: 'linear' }  
+            }}
             style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
           >
             <View 
@@ -43,9 +55,10 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
               className="relative w-full h-full"
             >
               <ImageBackground 
-                source={{ uri: media.backdrop }} 
+                source={{ uri: bgError ? fallbackBg : media.backdrop }} 
                 style={styles.backdrop}
                 resizeMode="cover"
+                onError={() => setBgError(true)}
               >
                 <View 
                   className="hero-gradient-overlay"
@@ -60,24 +73,28 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
         <AnimatePresence mode="wait">
           <motion.div
             key={media.id}
-            initial={{ y: 20, opacity: 0 }}
+            initial={{ y: 30, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -20, opacity: 0 }}
-            transition={{ duration: 0.5 }}
+            transition={{ 
+              duration: 0.7, 
+              ease: [0.25, 0.46, 0.45, 0.94],
+              delay: 0.3  
+            }}
           >
             <Text style={styles.heroTitle} numberOfLines={2}>{media.title}</Text>
             
             <View style={styles.metaContainer}>
               <View style={styles.metaItem}>
-                <Star size={18} color="#EAB308" fill="#EAB308" />
+                <span><Star size={18} color="#EAB308" fill="#EAB308" /></span>
                 <Text style={styles.metaText}>{media.rating}</Text>
               </View>
               <View style={styles.metaItem}>
-                <Calendar size={18} color="#D1D5DB" />
+                <span><Calendar size={18} color="#D1D5DB" /></span>
                 <Text style={styles.metaText}>{media.year}</Text>
               </View>
               <View style={styles.metaItem}>
-                <Clock size={18} color="#D1D5DB" />
+                <span><Clock size={18} color="#D1D5DB" /></span>
                 <Text style={styles.metaText}>{media.duration}</Text>
               </View>
               <View style={styles.categoryBadge}>
@@ -104,7 +121,7 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
                 className="cursor-pointer"
               >
                 <View style={styles.buttonInner}>
-                  <Play size={24} color="black" fill="black" />
+                  <span><Play size={24} color="black" fill="black" /></span>
                   <Text style={styles.playButtonText}>Assistir Agora</Text>
                 </View>
               </TouchableHighlight>
@@ -120,7 +137,7 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
                 className="cursor-pointer"
               >
                 <View style={styles.buttonInner}>
-                  <Info size={24} color="white" />
+                  <span><Info size={24} color="white" /></span>
                   <Text style={styles.infoButtonText}>Mais Informações</Text>
                 </View>
               </TouchableHighlight>
@@ -134,20 +151,26 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
 
 const styles = StyleSheet.create({
   container: {
-    height: SCREEN_HEIGHT * 0.75,
+    height: SCREEN_HEIGHT * 0.7,
     justifyContent: 'flex-end',
-    paddingBottom: 60,
+    paddingBottom: 140,
   },
   heroBackground: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: SCREEN_HEIGHT * 0.8,
+    height: '100%',
   },
   backdrop: {
     width: '100%',
     height: '100%',
+    // @ts-ignore - for web compatibility
+    backgroundPosition: 'center 10%',
+    // @ts-ignore
+    backgroundSize: 'cover',
+    // @ts-ignore
+    backgroundRepeat: 'no-repeat',
   },
   heroInfo: {
     maxWidth: 900,
@@ -155,13 +178,14 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   heroTitle: {
-    fontSize: 84,
+    fontSize: 72,
     fontWeight: '900',
     color: 'white',
     marginBottom: 16,
     fontFamily: 'Outfit',
     letterSpacing: -2,
-    lineHeight: 84,
+    lineHeight: 72,
+    maxWidth: '80%',
   },
   metaContainer: {
     flexDirection: 'row',

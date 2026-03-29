@@ -26,7 +26,7 @@ interface XandeflixState {
   isUsingMock: boolean;
   setIsUsingMock: (using: boolean) => void;
 
-  // Administrative State
+  // Administrative State (persisted in localStorage)
   isAdminMode: boolean;
   setIsAdminMode: (mode: boolean) => void;
   managedUsers: any[];
@@ -41,7 +41,8 @@ export const useStore = create<XandeflixState>((set) => ({
   selectedMedia: null,
   isSettingsVisible: false,
   isUsingMock: false,
-  isAdminMode: false,
+  // Persist admin mode across page reloads
+  isAdminMode: localStorage.getItem('xandeflix_admin_mode') === 'true',
   managedUsers: [],
   hiddenCategoryIds: JSON.parse(localStorage.getItem('xandeflix_hidden_categories') || '[]'),
 
@@ -52,7 +53,10 @@ export const useStore = create<XandeflixState>((set) => ({
   setSelectedMedia: (media) => set({ selectedMedia: media }),
   setIsSettingsVisible: (visible) => set({ isSettingsVisible: visible }),
   setIsUsingMock: (using) => set({ isUsingMock: using }),
-  setIsAdminMode: (mode) => set({ isAdminMode: mode }),
+  setIsAdminMode: (mode) => {
+    localStorage.setItem('xandeflix_admin_mode', String(mode));
+    set({ isAdminMode: mode });
+  },
   setManagedUsers: (users) => set({ managedUsers: users }),
   setHiddenCategoryIds: (ids) => {
     localStorage.setItem('xandeflix_hidden_categories', JSON.stringify(ids));

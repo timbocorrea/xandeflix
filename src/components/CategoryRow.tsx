@@ -13,13 +13,15 @@ interface MediaItemProps {
 
 const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPress }: MediaItemProps) => {
   const navId = `item-${rowIndex}-${index}`;
+  const [imgError, setImgError] = React.useState(false);
+  
+  // High-quality fallback if thumbnail domain (like xvbroker.click) is down
+  const fallbackImg = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop`;
 
   return (
     <TouchableHighlight
       onFocus={() => onFocus(item, navId)}
       onPress={() => onPress(item)}
-      // @ts-ignore
-      onClick={() => onPress(item)}
       underlayColor="transparent"
       style={[
         styles.cardContainer,
@@ -30,11 +32,12 @@ const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPre
     >
       <View style={styles.cardInner}>
         <Image 
-          source={{ uri: item.thumbnail }} 
+          source={{ uri: imgError ? fallbackImg : item.thumbnail }} 
           style={styles.thumbnail}
           resizeMode="cover"
           // @ts-ignore
           loading="lazy"
+          onError={() => setImgError(true)}
         />
         <View style={styles.placeholder} />
         
@@ -113,8 +116,8 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   cardContainer: {
-    width: 320,
-    height: 180,
+    width: 220,
+    height: 330,
     marginRight: 24,
     borderRadius: 12,
     overflow: 'hidden',
@@ -125,7 +128,7 @@ const styles = StyleSheet.create({
     transition: 'all 0.4s cubic-bezier(0.25, 1, 0.5, 1)',
   } as any,
   cardFocused: {
-    transform: 'scale(1.08) translateY(-10px)',
+    transform: 'scale(1.05) translateY(-5px)',
     zIndex: 10,
     borderColor: '#E50914',
     // @ts-ignore – web-only boxShadow

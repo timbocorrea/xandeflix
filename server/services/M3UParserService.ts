@@ -1,38 +1,51 @@
-import { Category, Media, MediaType } from '../../src/types';
+import { Category, Media, MediaType } from "../../src/types";
 
 export class M3UParserService {
   /**
-   * Parses M3U attributes and determines content type
+   * Parses basic EXTINF attributes from a line
    */
-  public static parseAttributes(attributes: string, name: string): Media {
-    const logoMatch = attributes.match(/tvg-logo="([^"]*)"/i);
-    const groupMatch = attributes.match(/group-title="([^"]*)"/i);
-    const xtreamGroupMatch = attributes.match(/group-id="([^"]*)"/i);
+  private static parseAttributes(attributes: string, name: string): Partial<Media> {
+    const logoMatch = attributes.match(/tvg-logo="([^"]+)"/);
+    const categoryMatch = attributes.match(/group-title="([^"]+)"/);
     
-    let category = 'Geral';
-    if (groupMatch) category = groupMatch[1];
-    else if (xtreamGroupMatch) category = xtreamGroupMatch[1];
-    
-    let type: MediaType = MediaType.LIVE;
+    const category = categoryMatch ? categoryMatch[1] : 'Geral';
     const catLower = category.toLowerCase();
     const nameLower = name.toLowerCase();
 
-    if (catLower.includes('filme') || catLower.includes('movie') || catLower.includes('vod') || nameLower.includes('filme') || nameLower.includes('vod')) {
+    let type: MediaType = MediaType.LIVE;
+
+    const movieKeywords = [
+      'filme', 'movie', 'vod', '4k', 'ultra', '1080p', 'films', 'filmes', 'movies',
+      'lancamentos', 'lançamentos', 'animacao', 'animação', 'acao', 'ação', 'comedia', 'comédia',
+      'terror', 'horror', 'suspense', 'drama', 'romance', 'documentario', 'documentário',
+      'ficcao', 'ficção', 'aventura', 'infantil', 'kids', 'cinema', 'premiere', '2024', '2023', '2022',
+      'marvel', 'dc comics', 'disney', 'pixar'
+    ];
+    const seriesKeywords = [
+      'serie', 'series', 'série', 'séries', 'season', 'temporada', 'novela', 'episodio', 'episódio', 
+      'ep ', 'ep.', 'animes', 'desenhos', 'kids series', 'netflix series', 'hbo series'
+    ];
+
+    if (movieKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
       type = MediaType.MOVIE;
-    } else if (catLower.includes('serie') || nameLower.includes('serie') || catLower.includes('season') || nameLower.includes('season')) {
+    } else if (seriesKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
       type = MediaType.SERIES;
     }
 
-    const thumbnail = logoMatch ? logoMatch[1] : `https://picsum.photos/seed/${encodeURIComponent(name)}/400/225`;
+    let thumbnail = logoMatch ? logoMatch[1] : `https://picsum.photos/seed/${encodeURIComponent(name)}/400/225`;
+    
+    // Clean dead domains to prevent heavy console errors
+    if (thumbnail && (thumbnail.includes('xvbroker.click') || thumbnail.includes('missing-image'))) {
+      thumbnail = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop`;
+    }
 
     return {
+      id: Math.random().toString(36).substring(2, 11),
       title: name,
       thumbnail,
       backdrop: thumbnail,
       category,
       type,
-      id: Math.random().toString(36).substring(2, 11),
-      videoUrl: '', // Will be populated in the main loop
       description: `Conteúdo da categoria ${category}`,
       year: 2024,
       rating: '12+',
@@ -52,23 +65,35 @@ export class M3UParserService {
       line = line.trim();
       if (!line) continue;
 
-      if (line.toUpperCase().startsWith('#EXTINF:')) {
+      if (line.toUpperCase().startsWith('#EXTINF')) {
         const commaIndex = line.indexOf(',');
         let name = 'Canal Sem Nome';
         let attributes = '';
         
         if (commaIndex !== -1) {
-          const infoPart = line.substring(0, commaIndex);
           name = line.substring(commaIndex + 1).trim();
-          attributes = infoPart.substring(infoPart.indexOf(':') + 1).trim();
+          const firstSpace = line.indexOf(' ');
+          const firstColon = line.indexOf(':');
+          
+          let attrStart = -1;
+          if (firstColon !== -1 && (firstSpace === -1 || firstColon < firstSpace)) {
+             attrStart = firstColon + 1;
+          } else if (firstSpace !== -1) {
+             attrStart = firstSpace + 1;
+          }
+          
+          if (attrStart !== -1 && attrStart < commaIndex) {
+            attributes = line.substring(attrStart, commaIndex).trim();
+          }
         } else {
-          attributes = line.substring(line.indexOf(':') + 1).trim();
+          const firstColon = line.indexOf(':');
+          attributes = line.substring(firstColon !== -1 ? firstColon + 1 : 7).trim();
         }
           
         currentItem = this.parseAttributes(attributes, name);
       } else if (line.startsWith('http')) {
         if (!currentItem) {
-          const name = `Link ${items.length + 1}`;
+          const name = `Conteúdo ${items.length + 1}`;
           const thumbnail = `https://picsum.photos/seed/link-${items.length}/400/225`;
           currentItem = {
             id: Math.random().toString(36).substring(2, 11),
@@ -77,7 +102,7 @@ export class M3UParserService {
             backdrop: thumbnail,
             category: 'Geral',
             type: MediaType.LIVE,
-            description: `Link de transmissão #${items.length + 1}`,
+            description: `Transmissão #${items.length + 1}`,
             year: 2024,
             rating: '12+',
             duration: 'Ao Vivo'
@@ -104,8 +129,14 @@ export class M3UParserService {
           items: []
         };
       }
-      if (categoriesMap[item.category].items.length < 500) {
-        categoriesMap[item.category].items.push(item);
+      
+      const currentCat = categoriesMap[item.category];
+      if (currentCat.items.length < 500) {
+        currentCat.items.push(item);
+        
+        // Refine category type based on majority of items
+        if (item.type === MediaType.MOVIE) currentCat.type = MediaType.MOVIE;
+        else if (item.type === MediaType.SERIES) currentCat.type = MediaType.SERIES;
       }
     });
 

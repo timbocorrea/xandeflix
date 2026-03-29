@@ -60,7 +60,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onComplete }) => {
                 style={styles.inputWrapper}
                 className="flex flex-row items-center bg-black/30 rounded-xl border border-white/10 px-4 mb-3"
               >
-                <Link size={20} color="rgba(255,255,255,0.4)" style={{ marginRight: 12 }} />
+                <span style={{ marginRight: 12 }}><Link size={20} color="rgba(255,255,255,0.4)" /></span>
                 <TextInput
                   style={styles.input}
                   // @ts-ignore
@@ -86,7 +86,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onComplete }) => {
                 >
                   <View style={styles.buttonInner}>
                     <Text style={styles.buttonText}>Carregar Lista</Text>
-                    <ArrowRight size={20} color="white" style={{ marginLeft: 8 }} />
+                    <span style={{ marginLeft: 8 }}><ArrowRight size={20} color="white" /></span>
                   </View>
                 </TouchableHighlight>
 

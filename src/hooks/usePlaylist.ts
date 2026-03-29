@@ -8,12 +8,31 @@ export const usePlaylist = () => {
 
   const fetchPlaylist = useCallback(async () => {
     setLoading(true);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const userId = localStorage.getItem('xandeflix_user_id');
+    let playlistUrl = localStorage.getItem('xandeflix_playlist_url') || '';
 
     try {
-      console.log('[API] Fetching centralized playlist...');
-      const response = await fetch('/api/playlist', { signal: controller.signal });
+      // 1. Refresh user info to get the latest playlist URL from admin changes
+      if (userId) {
+        console.log('[SESSION] Refreshing user data for ID:', userId);
+        const meResponse = await fetch(`/api/auth/me?id=${userId}`);
+        if (meResponse.ok) {
+          const userData = await meResponse.json();
+          if (userData.playlistUrl) {
+            playlistUrl = userData.playlistUrl;
+            localStorage.setItem('xandeflix_playlist_url', playlistUrl);
+          }
+        }
+      }
+
+      console.log('[API] Fetching playlist for URL:', playlistUrl.substring(0, 50) + '...');
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+      // 2. Fetch the actual M3U content (now with the correct URL)
+      const fetchUrl = playlistUrl ? `/api/playlist?url=${encodeURIComponent(playlistUrl)}` : '/api/playlist';
+      const response = await fetch(fetchUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
       
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);

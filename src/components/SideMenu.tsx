@@ -19,7 +19,7 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'search', label: 'Busca', icon: Search },
   { id: 'home', label: 'Início', icon: Home },
   { id: 'live', label: 'Canais ao Vivo', icon: Radio },
-  { id: 'movies', label: 'Filmes', icon: Film },
+  { id: 'movie', label: 'Filmes', icon: Film },
   { id: 'series', label: 'Séries', icon: Tv },
   { id: 'all', label: 'Geral', icon: Plus },
   { id: 'mylist', label: 'Minha Lista', icon: Plus },
@@ -69,14 +69,14 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
       onMouseLeave={() => setIsExpanded(false)}
     >
       {/* Logo Section */}
-      <div className="px-6 mb-12 h-10 flex items-center">
+      <div className="px-6 mb-6 h-10 flex items-center shrink-0">
         <Text className="text-red-600 font-display font-black text-2xl tracking-tighter italic">
           {isExpanded ? 'XANDEFLIX' : 'X'}
         </Text>
       </div>
 
       {/* User Profile Section */}
-      <div className="px-4 mb-8">
+      <div className="px-4 mb-4 shrink-0">
         <button
           onFocus={() => handleFocus('profile')}
           onBlur={handleBlur}
@@ -104,7 +104,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
       </div>
 
       {/* Navigation Items */}
-      <div className="flex-1 px-4 space-y-2">
+      <div className="flex-1 px-4 space-y-1 overflow-y-auto scrollbar-hide py-2">
         {MENU_ITEMS.map((item) => {
           const Icon = item.icon;
           const isFocused = focusedItem === item.id;
@@ -122,12 +122,11 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
               )}
             >
               <div className="flex flex-row items-center">
-                <div className="w-6 flex items-center justify-center shrink-0">
+                <div className="w-6 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
                   <Icon 
                     size={22} 
                     color={(isFocused || isActive) ? "#E50914" : "rgba(255,255,255,0.6)"} 
                     strokeWidth={(isFocused || isActive) ? 2.5 : 1.5}
-                    className="transition-transform duration-300 group-hover:scale-110"
                   />
                 </div>
                 {isExpanded && (
@@ -149,7 +148,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
       </div>
 
       {/* Bottom Info */}
-      <div className="px-4 py-6 border-t border-white/5 space-y-4">
+      <div className="px-4 py-4 border-t border-white/5 space-y-2 shrink-0">
         <button
           onFocus={() => handleFocus('logout')}
           onBlur={handleBlur}
@@ -160,11 +159,10 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
           )}
         >
           <div className="flex flex-row items-center">
-            <div className="w-6 flex items-center justify-center shrink-0">
+            <div className="w-6 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
               <LogOut 
                 size={22} 
                 color={focusedItem === 'logout' ? "#E50914" : "rgba(255,255,255,0.6)"} 
-                className="transition-transform duration-300 group-hover:scale-110"
               />
             </div>
             {isExpanded && (
