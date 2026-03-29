@@ -90,10 +90,20 @@ if (process.env.PLAYLIST_URL) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+
+  console.log('[DEBUG] Iniciando servidor Xandeflix...');
+  console.log('[DEBUG] Supabase URL configurada:', !!process.env.VITE_SUPABASE_URL);
 
   // Apply base middlewares
   app.use(cors());
+  app.use((req, res, next) => {
+    console.log(`[SERVER] ${req.method} ${req.path}`);
+    next();
+  });
+
+  // Rota de Teste (Ping)
+  app.get('/api/ping', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
   
   // API Route: Streaming Proxy - MUST BE ABOVE COMPRESSION
   // We don't want to compress media streams as it adds overhead and breaks chunked encoding playback
