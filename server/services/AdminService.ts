@@ -158,8 +158,8 @@ export class AdminService {
           }
         };
       }
-    } catch (err) {
-      console.warn('[AUTH] Supabase check failed, checking local storage...', err);
+    } catch (err: any) {
+      console.error('[AUTH] Erro crítico na conexão com o Supabase:', err.message);
     }
 
     // Fallback to local users.json
