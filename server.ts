@@ -88,8 +88,9 @@ if (process.env.PLAYLIST_URL) {
   }
 }
 
-async function startServer() {
-  const app = express();
+const app = express();
+
+export async function configApp() {
   const PORT = Number(process.env.PORT || 3000);
 
   console.log('[DEBUG] Iniciando servidor Xandeflix...');
@@ -423,10 +424,15 @@ async function startServer() {
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] Xandeflix running: http://localhost:${PORT}`);
-    console.log(`[SERVER] Mode: ${process.env.NODE_ENV || 'development'}`);
-  });
+  // No Vercel, o Vercel mesmo gerencia a porta, então só ouvimos localmente
+  if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[SERVER] Xandeflix running: http://localhost:${PORT}`);
+      console.log(`[SERVER] Mode: ${process.env.NODE_ENV || 'development'}`);
+    });
+  }
 }
 
-startServer();
+// Inicializa a configuração e exporta para o servidor
+configApp();
+export default app;
