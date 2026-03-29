@@ -8,14 +8,16 @@ export const usePlaylist = () => {
 
   const fetchPlaylist = useCallback(async () => {
     setLoading(true);
-    const userId = localStorage.getItem('xandeflix_user_id');
+    const authToken = localStorage.getItem('xandeflix_auth_token') || '';
     let playlistUrl = localStorage.getItem('xandeflix_playlist_url') || '';
 
     try {
       // 1. Refresh user info to get the latest playlist URL from admin changes
-      if (userId) {
-        console.log('[SESSION] Refreshing user data for ID:', userId);
-        const meResponse = await fetch(`/api/auth/me?id=${userId}`);
+      if (authToken) {
+        console.log('[SESSION] Refreshing user data with auth token.');
+        const meResponse = await fetch('/api/auth/me', {
+          headers: { 'x-auth-token': authToken }
+        });
         if (meResponse.ok) {
           const userData = await meResponse.json();
           if (userData.playlistUrl) {
@@ -31,8 +33,14 @@ export const usePlaylist = () => {
       const timeoutId = setTimeout(() => controller.abort(), 45000);
 
       // 2. Fetch the actual M3U content (now with the correct URL)
-      const fetchUrl = playlistUrl ? `/api/playlist?url=${encodeURIComponent(playlistUrl)}` : '/api/playlist';
-      const response = await fetch(fetchUrl, { signal: controller.signal });
+      const fetchUrl = authToken
+        ? '/api/playlist'
+        : (playlistUrl ? `/api/playlist?url=${encodeURIComponent(playlistUrl)}` : '/api/playlist');
+
+      const response = await fetch(fetchUrl, {
+        signal: controller.signal,
+        headers: authToken ? { 'x-auth-token': authToken } : undefined,
+      });
       clearTimeout(timeoutId);
       
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);

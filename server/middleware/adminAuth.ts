@@ -1,13 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
+import { AuthSessionService } from '../services/AuthSessionService';
 
 /**
  * Middleware for validating admin privileges
  */
 export const adminAuthMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  const adminToken = req.headers['x-admin-token'];
-  const secretKey = process.env.ADMIN_SECRET_KEY || 'xandeflix-admin-2026';
+  const adminToken = (req.headers['x-admin-token'] || req.headers.authorization?.replace(/^Bearer\s+/i, '')) as string | undefined;
+  const session = AuthSessionService.getSession(adminToken);
 
-  if (adminToken === secretKey) {
+  if (session?.role === 'admin') {
     next();
   } else {
     console.warn(`[SECURITY] Unauthorized admin access attempt from: ${req.ip}`);

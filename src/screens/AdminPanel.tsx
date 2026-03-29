@@ -12,6 +12,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const authToken = localStorage.getItem('xandeflix_auth_token') || '';
   
   // New User Form State
   const [newUserName, setNewUserName] = useState('');
@@ -25,9 +26,8 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const token = 'xandeflix-admin-2026';
       const response = await fetch('/api/admin/users', {
-        headers: { 'x-admin-token': token }
+        headers: { 'x-admin-token': authToken }
       });
       if (!response.ok) throw new Error('Não foi possível carregar os usuários.');
       const data = await response.json();
@@ -37,17 +37,16 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     } finally {
       setLoading(false);
     }
-  }, [setManagedUsers]);
+  }, [setManagedUsers, authToken]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const handleToggleStatus = async (userId: string, currentStatus: boolean) => {
     setActionLoading(userId);
     try {
-      const token = 'xandeflix-admin-2026';
       await fetch('/api/admin/user/status', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ userId, blocked: !currentStatus })
       });
       await fetchUsers();
@@ -59,10 +58,9 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     if (!newUserName || !newUserUsername) return;
     setLoading(true);
     try {
-      const token = 'xandeflix-admin-2026';
       await fetch('/api/admin/user/add', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ 
           name: newUserName, 
           playlistUrl: newUserUrl,
@@ -83,10 +81,9 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     if (!confirm('Tem certeza que deseja remover este acesso?')) return;
     setActionLoading(userId);
     try {
-      const token = 'xandeflix-admin-2026';
       await fetch(`/api/admin/user/${userId}`, {
         method: 'DELETE',
-        headers: { 'x-admin-token': token }
+        headers: { 'x-admin-token': authToken }
       });
       await fetchUsers();
     } catch (err) { console.error(err); } 
@@ -97,10 +94,9 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     if (!editingUser) return;
     setActionLoading(editingUser.id);
     try {
-      const token = 'xandeflix-admin-2026';
       await fetch('/api/admin/user/update', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ 
           userId: editingUser.id, 
           name: editingUser.name,

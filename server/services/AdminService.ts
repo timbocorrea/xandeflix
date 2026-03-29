@@ -27,20 +27,8 @@ export class AdminService {
           return;
         }
       }
-      // File doesn't exist or is empty → seed default user
-      this.users = [
-        { 
-          id: 'usr_001', 
-          name: 'Alexandre',
-          username: 'Alexandre',
-          password: '123',
-          playlistUrl: process.env.PLAYLIST_URL || '', 
-          isBlocked: false,
-          lastAccess: new Date().toISOString()
-        }
-      ];
-      this.saveUsers();
-      console.log('[ADMIN] Created default user and saved to file.');
+      this.users = [];
+      console.log('[ADMIN] No users file found. Starting with an empty user list.');
     } catch (err) {
       console.error('[ADMIN] Error loading users:', err);
       this.users = [];
@@ -109,9 +97,13 @@ export class AdminService {
   }
 
   public static async authenticate(identifier: string, token?: string): Promise<{ type: 'admin' | 'user'; data?: UserRecord } | null> {
-    const adminSecret = process.env.ADMIN_SECRET_KEY || 'xandeflix-admin-2026';
+    const adminSecret = process.env.ADMIN_SECRET_KEY;
     
-    if (identifier === 'admin' && token === adminSecret) {
+    if (identifier === 'admin' && !adminSecret) {
+      console.warn('[AUTH] ADMIN_SECRET_KEY is not configured.');
+    }
+
+    if (identifier === 'admin' && adminSecret && token === adminSecret) {
       console.log('[AUTH] Admin authenticated successfully');
       return { type: 'admin' };
     }

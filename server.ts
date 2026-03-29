@@ -12,6 +12,7 @@ import { M3UParserService } from './server/services/M3UParserService';
 import { StreamProxyService } from './server/services/StreamProxyService';
 import { CacheManager } from './server/services/CacheManager';
 import { AdminService } from './server/services/AdminService';
+import { AuthSessionService } from './server/services/AuthSessionService';
 
 // Import Middleware
 import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security';
@@ -26,7 +27,11 @@ dotenv.config();
 /**
  * Global State & Cache Configuration
  */
-const authorizedDomains = new Set<string>(['dnsd1.space', 'localhost', '127.0.0.1']);
+const authorizedDomains = new Set<string>(['dnsd1.space']);
+if (process.env.NODE_ENV !== 'production') {
+  authorizedDomains.add('localhost');
+  authorizedDomains.add('127.0.0.1');
+}
 const playlistCache = new CacheManager<any>(30); // 30 minutes cache
 const pendingRequests = new Map<string, Promise<any>>();
 
@@ -44,12 +49,38 @@ async function fetchWithRetry(url: string, options: any, retries = 3, backoff = 
   }
 }
 
+function getRequestAuthToken(req: express.Request): string | undefined {
+  const token = req.headers['x-auth-token'] || req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  return Array.isArray(token) ? token[0] : token;
+}
+
+function registerAuthorizedDomainFromUrl(targetUrl: string) {
+  try {
+    const hostname = new URL(targetUrl).hostname.toLowerCase();
+    if (!authorizedDomains.has(hostname)) {
+      authorizedDomains.add(hostname);
+      console.log(`[SECURITY] Whitelisted domain: ${hostname}`);
+    }
+  } catch {
+    // Ignore invalid URLs here; validation happens at call sites.
+  }
+}
+
+function isAllowedPlaylistUrl(targetUrl: string): boolean {
+  try {
+    const hostname = new URL(targetUrl).hostname.toLowerCase();
+    return authorizedDomains.has(hostname);
+  } catch {
+    return false;
+  }
+}
+
 
 // Seed whitelist from environment
 if (process.env.PLAYLIST_URL) {
   try {
     const url = new URL(process.env.PLAYLIST_URL);
-    authorizedDomains.add(url.hostname);
+    registerAuthorizedDomainFromUrl(url.toString());
   } catch (e) {
     console.warn('[SECURITY] Invalid PLAYLIST_URL in environment.');
   }
@@ -81,10 +112,33 @@ async function startServer() {
    * API Route: Fetch and parse M3U playlist
    */
   app.get('/api/playlist', async (req, res) => {
-    const playlistUrl = (req.query.url as string) || process.env.PLAYLIST_URL || '';
+    const session = AuthSessionService.getSession(getRequestAuthToken(req));
+    let playlistUrl = '';
+
+    if (session?.role === 'user' && session.userId) {
+      const users = await AdminService.listUsers();
+      const user = users.find(u => u.id === session.userId && !u.isBlocked);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      playlistUrl = user.playlistUrl || '';
+      if (playlistUrl) {
+        registerAuthorizedDomainFromUrl(playlistUrl);
+      }
+    } else {
+      playlistUrl = (req.query.url as string) || process.env.PLAYLIST_URL || '';
+    }
     
     if (!playlistUrl) {
       return res.status(400).json({ error: 'Playlist URL not provided.' });
+    }
+
+    if (!isAllowedPlaylistUrl(playlistUrl)) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'O domínio solicitado não está autorizado.'
+      });
     }
 
     // Attempt to serve from cache or pending request queue
@@ -135,13 +189,7 @@ async function startServer() {
 
       // Delegate parsing to parser service
       const categories = M3UParserService.parse(response.data, (url) => {
-        try { 
-          const hostname = new URL(url).hostname;
-          if (!authorizedDomains.has(hostname)) {
-            authorizedDomains.add(hostname);
-            console.log(`[SECURITY] Whitelisted new domain: ${hostname}`);
-          }
-        } catch (e) {}
+        registerAuthorizedDomainFromUrl(url);
       });
 
       console.log(`[API] Successfully parsed ${categories.length} categories.`);
@@ -169,6 +217,11 @@ async function startServer() {
    * API Route: Diagnostic helper
    */
   app.get('/api/diagnostic', whitelistMiddleware(authorizedDomains), async (req, res) => {
+    const session = AuthSessionService.getSession(getRequestAuthToken(req));
+    if (!session) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     let testUrl = req.query.url as string || process.env.PLAYLIST_URL || '';
     
     // Extract real URL if proxy was passed
@@ -213,7 +266,27 @@ async function startServer() {
 
       const result = await AdminService.authenticate(identifier, token);
       if (result) {
-        res.json(result);
+        const sessionToken = AuthSessionService.issueSession(result.type, result.data?.id);
+        if (result.type === 'user' && result.data?.playlistUrl) {
+          registerAuthorizedDomainFromUrl(result.data.playlistUrl);
+        }
+
+        const responseBody = {
+          ...result,
+          sessionToken,
+          data: result.data
+            ? {
+                id: result.data.id,
+                name: result.data.name,
+                username: result.data.username,
+                playlistUrl: result.data.playlistUrl,
+                isBlocked: result.data.isBlocked,
+                lastAccess: result.data.lastAccess,
+              }
+            : undefined,
+        };
+
+        res.json(responseBody);
       } else {
         res.status(401).json({ error: 'Credenciais inválidas ou acesso bloqueado.' });
       }
@@ -224,11 +297,26 @@ async function startServer() {
 
   app.get('/api/auth/me', async (req, res) => {
     try {
-      const userId = req.query.id as string;
-      if (!userId) return res.status(400).send('ID is required');
+      const session = AuthSessionService.getSession(getRequestAuthToken(req));
+      if (!session || session.role !== 'user' || !session.userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
       const users = await AdminService.listUsers();
-      const user = users.find(u => u.id === userId && !u.isBlocked);
-      if (user) res.json(user);
+      const user = users.find(u => u.id === session.userId && !u.isBlocked);
+      if (user) {
+        if (user.playlistUrl) {
+          registerAuthorizedDomainFromUrl(user.playlistUrl);
+        }
+        res.json({
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          playlistUrl: user.playlistUrl,
+          isBlocked: user.isBlocked,
+          lastAccess: user.lastAccess,
+        });
+      }
       else res.status(404).send('User not found');
     } catch (e: any) {
       res.status(500).json({ error: e.message });

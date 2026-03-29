@@ -10,16 +10,18 @@ export default function App() {
   const { isAdminMode, setIsAdminMode } = useStore();
 
   useEffect(() => {
-    const savedSession = localStorage.getItem('xandeflix_session');
-    if (savedSession) {
+    const savedToken = localStorage.getItem('xandeflix_auth_token');
+    if (savedToken) {
       setIsAuthenticated(true);
     }
     setIsReady(true);
   }, []);
 
-  const handleLoginSuccess = (playlistUrl?: string, userId?: string) => {
+  const handleLoginSuccess = (playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => {
     if (playlistUrl) localStorage.setItem('xandeflix_playlist_url', playlistUrl);
     if (userId) localStorage.setItem('xandeflix_user_id', userId);
+    if (authToken) localStorage.setItem('xandeflix_auth_token', authToken);
+    if (role) localStorage.setItem('xandeflix_auth_role', role);
     
     localStorage.setItem('xandeflix_session', 'active');
     setIsAuthenticated(true);
@@ -29,6 +31,8 @@ export default function App() {
     localStorage.removeItem('xandeflix_session');
     localStorage.removeItem('xandeflix_playlist_url');
     localStorage.removeItem('xandeflix_user_id');
+    localStorage.removeItem('xandeflix_auth_token');
+    localStorage.removeItem('xandeflix_auth_role');
     localStorage.removeItem('xandeflix_admin_mode');
     setIsAdminMode(false);
     setIsAuthenticated(false);
@@ -36,12 +40,10 @@ export default function App() {
 
   // When admin exits admin panel, check if there's a real user session
   const handleExitAdmin = () => {
-    const hasUserSession = localStorage.getItem('xandeflix_user_id');
-    if (hasUserSession) {
-      // Admin also has a user session, go to home
+    const role = localStorage.getItem('xandeflix_auth_role');
+    if (role === 'user') {
       setIsAdminMode(false);
     } else {
-      // Admin-only session, go back to login
       handleLogout();
     }
   };

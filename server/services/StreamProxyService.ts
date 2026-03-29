@@ -38,7 +38,9 @@ export class StreamProxyService {
         timeout: 60000,
         maxRedirects: 10,
         validateStatus: () => true,
-        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        httpsAgent: new https.Agent({
+          rejectUnauthorized: process.env.ALLOW_INSECURE_TLS === 'true' ? false : true,
+        }),
         httpAgent: new http.Agent({ keepAlive: true }),
       });
 

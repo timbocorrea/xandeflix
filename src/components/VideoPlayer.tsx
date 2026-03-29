@@ -42,11 +42,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [diagnostic, setDiagnostic] = React.useState<any>(null);
   const [diagnosing, setDiagnosing] = React.useState(false);
   const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(url));
+  const authToken = localStorage.getItem('xandeflix_auth_token') || '';
 
   const runDiagnostic = async () => {
     setDiagnosing(true);
     try {
-      const response = await fetch(`/api/diagnostic?url=${encodeURIComponent(url)}`);
+      const response = await fetch(`/api/diagnostic?url=${encodeURIComponent(url)}`, {
+        headers: authToken ? { 'x-auth-token': authToken } : undefined,
+      });
       const data = await response.json();
       setDiagnostic(data);
     } catch (err) {

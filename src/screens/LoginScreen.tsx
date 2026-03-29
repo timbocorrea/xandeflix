@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../store/useStore';
 
 interface LoginScreenProps {
-  onLoginSuccess: (playlistUrl?: string, userId?: string) => void;
+  onLoginSuccess: (playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
@@ -40,10 +40,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
       if (result.type === 'admin') {
         setIsAdminMode(true);
-        onLoginSuccess();
+        onLoginSuccess(undefined, undefined, result.sessionToken, 'admin');
       } else if (result.type === 'user') {
         setIsAdminMode(false);
-        onLoginSuccess(result.data?.playlistUrl, result.data?.id);
+        onLoginSuccess(result.data?.playlistUrl, result.data?.id, result.sessionToken, 'user');
       }
     } catch (err) {
       setError('Erro de conexão com o servidor.');
