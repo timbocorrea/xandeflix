@@ -13,6 +13,7 @@ import { StreamProxyService } from './server/services/StreamProxyService';
 import { CacheManager } from './server/services/CacheManager';
 import { AdminService } from './server/services/AdminService';
 import { AuthSessionService } from './server/services/AuthSessionService';
+import { TMDBService } from './server/services/TMDBService';
 
 // Import Middleware
 import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security';
@@ -21,8 +22,9 @@ import { adminAuthMiddleware } from './server/middleware/adminAuth';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configure environment
+// Configure environment: load .env, then .env.example as fallback for missing vars
 dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env.example'), override: false });
 
 /**
  * Global State & Cache Configuration
@@ -210,6 +212,25 @@ async function startServer() {
       pendingRequests.delete(playlistUrl);
       console.error('[API] Playlist error:', error.message);
       res.status(500).json({ error: 'Failed to fetch playlist', details: error.message });
+    }
+  });
+
+  /**
+   * API Route: Get metadata for a specific media from TMDB
+   */
+  app.get('/api/metadata', async (req, res) => {
+    const { title, type } = req.query;
+
+    if (!title || !type) {
+      return res.status(400).json({ error: 'Title and Type (movie/series) are required parameters.' });
+    }
+
+    try {
+      const metadata = await TMDBService.searchMedia(title as string, type as 'movie' | 'series');
+      res.json(metadata);
+    } catch (error: any) {
+      console.error('[API] Metadata error:', error.message);
+      res.status(500).json({ error: 'Failed to fetch metadata', details: error.message });
     }
   });
 

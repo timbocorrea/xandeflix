@@ -7,7 +7,8 @@ import { useStore } from './store/useStore';
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isReady, setIsReady] = useState(false);
-  const { isAdminMode, setIsAdminMode } = useStore();
+  const isAdminMode = useStore((state) => state.isAdminMode);
+  const setIsAdminMode = useStore((state) => state.setIsAdminMode);
 
   useEffect(() => {
     const savedToken = localStorage.getItem('xandeflix_auth_token');

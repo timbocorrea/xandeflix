@@ -5,6 +5,14 @@ export enum MediaType {
   LIVE = 'live'
 }
 
+export interface Episode {
+  id: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string;
+  videoUrl: string;
+}
+
 export interface Media {
   id: string;
   title: string;
@@ -17,6 +25,13 @@ export interface Media {
   rating: string;
   duration?: string;
   category: string;
+  currentEpisode?: Episode;
+  currentSeasonNumber?: number;
+  seasons?: {
+    seasonNumber: number;
+    episodes: Episode[];
+  }[];
+  qualities?: { name: string; url: string }[];
 }
 
 export interface Category {

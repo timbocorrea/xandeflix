@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, StyleSheet, ScrollView, Animated, Dimensions, TouchableHighlight, Text } from 'react-native';
 import { RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -18,6 +18,7 @@ import { VideoPlayer } from '../components/VideoPlayer';
 import { HeroSection } from '../components/HeroSection';
 import { CategoryRow } from '../components/CategoryRow';
 import LoadingScreen from '../components/LoadingScreen';
+import { MediaDetailsPage } from '../components/MediaDetailsModal';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -34,6 +35,8 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setHiddenCategoryIds,
     isUsingMock 
   } = useStore();
+  const setActiveFilter = useStore((state) => state.setActiveFilter);
+  const setIsAdminMode = useStore((state) => state.setIsAdminMode);
 
   // Custom Hooks for Data & Filtering
   const { fetchPlaylist, loading } = usePlaylist();
@@ -43,8 +46,11 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
   const [videoType, setVideoType] = useState<'live' | 'movie' | 'series' | null>(null);
+  const [playingMedia, setPlayingMedia] = useState<Media | null>(null);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
   const [isPlayerMinimized, setIsPlayerMinimized] = useState(false);
+  const [detailsMedia, setDetailsMedia] = useState<Media | null>(null);
+  const [isDetailsVisible, setIsDetailsVisible] = useState(false);
   
   const scrollRef = useRef<ScrollView>(null);
   
@@ -54,12 +60,32 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, [fetchPlaylist]);
 
   // Handle play action
-  const handlePlay = useCallback((media: Media) => {
+  const handlePlay = useCallback(async (media: Media) => {
+    try {
+      if (typeof document !== 'undefined' && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (e) {
+      console.warn('Could not auto-enter fullscreen:', e);
+    }
+    
+    setPlayingMedia(media);
     setActiveVideoUrl(media.videoUrl);
     setVideoType(media.type);
     setIsPlayerMinimized(false); // Sempre abre em tela cheia ao clicar
     setIsAutoRotating(false);
+    setIsDetailsVisible(false); // Close details if open
   }, []);
+
+  const handleMediaPress = useCallback((media: Media) => {
+    if (media.type === 'movie' || media.type === 'series') {
+      setDetailsMedia(media);
+      setIsDetailsVisible(true);
+    } else {
+      // Live content goes straight to player
+      handlePlay(media);
+    }
+  }, [handlePlay]);
 
   const handleToggleMinimize = useCallback(() => {
     setIsPlayerMinimized(prev => !prev);
@@ -121,29 +147,28 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     const finalPool = pool.slice(0, 15);
     setHeroPool(finalPool);
     setHeroIndex(0);
-    
-    // Crucial: Update the current display media when the tab changes
-    if (finalPool.length > 0) {
-      setSelectedMedia(finalPool[0]);
-    } else {
-      setSelectedMedia(null);
-    }
-  }, [allCategories, activeFilter, setSelectedMedia]);
+  }, [allCategories, activeFilter]);
 
   // Auto-rotation with fade transition
   useEffect(() => {
     if (!isAutoRotating || heroPool.length === 0) return;
 
     const interval = setInterval(() => {
-      setHeroIndex(prev => {
-        const next = (prev + 1) % heroPool.length;
-        setSelectedMedia(heroPool[next]);
-        return next;
-      });
+      setHeroIndex(prev => (prev + 1) % heroPool.length);
     }, 8000); // 8 seconds per slide (Netflix-like pacing)
 
     return () => clearInterval(interval);
-  }, [isAutoRotating, heroPool, setSelectedMedia]);
+  }, [isAutoRotating, heroPool]);
+
+  useEffect(() => {
+    if (heroPool.length === 0) {
+      setSelectedMedia(null);
+      return;
+    }
+
+    const nextMedia = heroPool[heroIndex] || null;
+    setSelectedMedia(nextMedia);
+  }, [heroIndex, heroPool, setSelectedMedia]);
 
   /**
    * Focus Handlers
@@ -164,16 +189,53 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
    */
   const handleMenuSelect = useCallback((filter: string) => {
     if (filter === 'admin') {
-      useStore.getState().setIsAdminMode(true);
+      setIsAdminMode(true);
       return;
     }
-    useStore.getState().setActiveFilter(filter);
+    setActiveFilter(filter);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
-  }, []);
+  }, [setActiveFilter, setIsAdminMode]);
 
   const handleSaveSettings = useCallback((url: string, newHiddenIds: string[]) => {
     setHiddenCategoryIds(newHiddenIds);
   }, [setHiddenCategoryIds]);
+
+  const nextEpisode = useMemo(() => {
+    if (!playingMedia || playingMedia.type !== 'series' || !playingMedia.seasons?.length || !playingMedia.currentEpisode) {
+      return null;
+    }
+
+    const seasonNumber = playingMedia.currentSeasonNumber ?? playingMedia.currentEpisode.seasonNumber;
+    const seasonIndex = playingMedia.seasons.findIndex((season) => season.seasonNumber === seasonNumber);
+    if (seasonIndex === -1) return null;
+
+    const season = playingMedia.seasons[seasonIndex];
+    const episodeIndex = season.episodes.findIndex((episode) => episode.id === playingMedia.currentEpisode?.id);
+    if (episodeIndex === -1) return null;
+
+    const directNextEpisode = season.episodes[episodeIndex + 1];
+    if (directNextEpisode) {
+      return {
+        ...playingMedia,
+        videoUrl: directNextEpisode.videoUrl,
+        title: `${playingMedia.title.split(' - ')[0]} - ${directNextEpisode.title}`,
+        currentEpisode: directNextEpisode,
+        currentSeasonNumber: season.seasonNumber,
+      };
+    }
+
+    const nextSeason = playingMedia.seasons[seasonIndex + 1];
+    const firstEpisodeNextSeason = nextSeason?.episodes[0];
+    if (!firstEpisodeNextSeason) return null;
+
+    return {
+      ...playingMedia,
+      videoUrl: firstEpisodeNextSeason.videoUrl,
+      title: `${playingMedia.title.split(' - ')[0]} - ${firstEpisodeNextSeason.title}`,
+      currentEpisode: firstEpisodeNextSeason,
+      currentSeasonNumber: nextSeason.seasonNumber,
+    };
+  }, [playingMedia]);
 
   return (
     <View style={styles.container}>
@@ -211,7 +273,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         {/* Cinematic Hero */}
         <HeroSection 
           media={selectedMedia}
-          onPlay={handlePlay}
+          onPlay={handleMediaPress}
           isAutoRotating={isAutoRotating}
           onAutoRotate={() => setIsAutoRotating(true)}
           focusedId={focusedId}
@@ -232,7 +294,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 rowIndex={rowIndex}
                 focusedId={focusedId}
                 onMediaFocus={handleMediaFocus}
-                onMediaPress={handlePlay}
+                onMediaPress={handleMediaPress}
               />
             ))
           )}
@@ -263,12 +325,35 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
       {/* Overlays */}
       <AnimatePresence>
+        {isDetailsVisible && detailsMedia && (
+          <MediaDetailsPage
+            key={detailsMedia.id}
+            media={detailsMedia}
+            onClose={() => setIsDetailsVisible(false)}
+            onPlay={handlePlay}
+            onSelectMedia={setDetailsMedia}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {activeVideoUrl && (
           <VideoPlayer 
             key={activeVideoUrl}
             url={activeVideoUrl} 
             mediaType={videoType || 'live'}
-            onClose={() => setActiveVideoUrl(null)}
+            media={playingMedia}
+            nextEpisode={nextEpisode}
+            onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
+            onClose={() => {
+              setActiveVideoUrl(null);
+              setPlayingMedia(null);
+              try {
+                if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+                  document.exitFullscreen().catch(() => {});
+                }
+              } catch (e) {}
+            }}
             isMinimized={isPlayerMinimized}
             onToggleMinimize={handleToggleMinimize}
           />
@@ -314,8 +399,7 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     justifyContent: 'space-between',
     zIndex: 100,
-    // Add a delicate gradient top-to-bottom for readability
-    backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 10%, transparent 100%)',
+    backgroundColor: 'transparent',
   } as any,
   logo: {
     fontSize: 56,

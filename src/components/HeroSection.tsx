@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableHighlight, Image, ImageBackground, Dimensions } from 'react-native';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Info, Star, Calendar, Clock } from 'lucide-react';
+import { Play, Info, Star, Calendar, Clock, Loader2 } from 'lucide-react';
 import { Media } from '../types';
+import { useTMDB } from '../hooks/useTMDB';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -24,23 +25,44 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
   onFocus 
 }) => {
   const [bgError, setBgError] = useState(false);
+  
+  // Use TMDB Hook to enrich content
+  const { data: tmdbData, loading: tmdbLoading } = useTMDB(
+    media?.title, 
+    media?.type
+  );
+
+  // Compute final display properties: prioritizing rich TMDB data over raw playlist info
+  const displayData = useMemo(() => {
+    if (!media) return null;
+    if (!tmdbData) return media;
+
+    return {
+      ...media,
+      description: tmdbData.description || media.description,
+      year: tmdbData.year || media.year,
+      rating: tmdbData.rating || media.rating,
+      backdrop: tmdbData.backdrop || media.backdrop,
+      thumbnail: tmdbData.thumbnail || media.thumbnail,
+    };
+  }, [media, tmdbData]);
 
   // Reset error state when media changes
   useEffect(() => {
     setBgError(false);
   }, [media?.id]);
 
-  if (!media) return null;
+  if (!displayData) return null;
 
   const fallbackBg = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=1920&auto=format&fit=crop`;
 
   return (
     <View style={styles.container}>
       {/* Hero Background with Ken Burns effect */}
-      <View style={[styles.heroBackground, { pointerEvents: 'none' as const }]}>
+      <View style={styles.heroBackground}>
         <AnimatePresence mode="wait">
           <motion.div
-            key={media.id}
+            key={displayData.id}
             initial={{ opacity: 0, scale: 1.05 }}
             animate={{ opacity: 1, scale: 1.0 }}
             exit={{ opacity: 0 }}
@@ -55,15 +77,35 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
               className="relative w-full h-full"
             >
               <ImageBackground 
-                source={{ uri: bgError ? fallbackBg : media.backdrop }} 
+                source={{ uri: bgError ? fallbackBg : displayData.backdrop }} 
                 style={styles.backdrop}
                 resizeMode="cover"
                 onError={() => setBgError(true)}
               >
+                {/* Horizontal gradient for text contrast */}
                 <View 
-                  className="hero-gradient-overlay"
+                  style={{
+                    position: 'absolute',
+                    top: 0, bottom: 0, left: 0,
+                    width: '60%',
+                    pointerEvents: 'none',
+                    zIndex: 1,
+                    // @ts-ignore
+                    backgroundImage: 'linear-gradient(to right, rgba(5,5,5,1) 0%, rgba(5,5,5,0.85) 40%, rgba(5,5,5,0) 100%)'
+                  }}
                 />
-                <View pointerEvents="none" style={styles.heroShade} />
+                {/* Bottom gradient to blend into page */}
+                <View 
+                  style={{
+                    position: 'absolute',
+                    bottom: 0, left: 0, right: 0,
+                    height: '40%',
+                    pointerEvents: 'none',
+                    zIndex: 2,
+                    // @ts-ignore
+                    backgroundImage: 'linear-gradient(to top, rgba(5,5,5,1) 0%, rgba(5,5,5,0) 100%)'
+                  }}
+                />
               </ImageBackground>
             </View>
           </motion.div>
@@ -73,7 +115,7 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
       <View style={styles.heroInfo}>
         <AnimatePresence mode="wait">
           <motion.div
-            key={media.id}
+            key={displayData.id}
             initial={{ y: 30, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -20, opacity: 0 }}
@@ -83,28 +125,39 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
               delay: 0.3  
             }}
           >
-            <Text style={styles.heroTitle} numberOfLines={2}>{media.title}</Text>
+            <Text style={styles.heroTitle} numberOfLines={2}>{displayData.title}</Text>
             
             <View style={styles.metaContainer}>
               <View style={styles.metaItem}>
                 <span><Star size={18} color="#EAB308" fill="#EAB308" /></span>
-                <Text style={styles.metaText}>{media.rating}</Text>
+                <Text style={styles.metaText}>{displayData.rating}</Text>
               </View>
               <View style={styles.metaItem}>
                 <span><Calendar size={18} color="#D1D5DB" /></span>
-                <Text style={styles.metaText}>{media.year}</Text>
+                <Text style={styles.metaText}>{displayData.year}</Text>
               </View>
               <View style={styles.metaItem}>
                 <span><Clock size={18} color="#D1D5DB" /></span>
-                <Text style={styles.metaText}>{media.duration}</Text>
+                <Text style={styles.metaText}>{displayData.duration}</Text>
               </View>
               <View style={styles.categoryBadge}>
-                <Text style={styles.categoryText}>{media.category}</Text>
+                <Text style={styles.categoryText}>{displayData.category}</Text>
               </View>
+              
+              {tmdbLoading && (
+                <View style={{ marginLeft: 15 }}>
+                   <motion.div
+                     animate={{ rotate: 360 }}
+                     transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                   >
+                     <Loader2 size={16} color="rgba(255,255,255,0.4)" />
+                   </motion.div>
+                </View>
+              )}
             </View>
 
             <Text style={styles.description} numberOfLines={3}>
-              {media.description}
+              {displayData.description}
             </Text>
 
             <View style={styles.buttonContainer}>
@@ -166,26 +219,14 @@ const styles = StyleSheet.create({
   backdrop: {
     width: '100%',
     height: '100%',
-    // @ts-ignore - for web compatibility
-    backgroundPosition: 'center 10%',
-    // @ts-ignore
-    backgroundSize: 'cover',
-    // @ts-ignore
-    backgroundRepeat: 'no-repeat',
-  },
+    backgroundPosition: 'center',
+  } as any,
   heroInfo: {
     position: 'relative',
     maxWidth: 900,
     marginLeft: 20,
     zIndex: 10,
   },
-  heroShade: {
-    position: 'absolute',
-    inset: 0,
-    width: '70%',
-    backgroundImage: 'linear-gradient(to right, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.76) 42%, rgba(0,0,0,0.35) 74%, rgba(0,0,0,0) 100%)',
-    zIndex: 1,
-  } as any,
   heroTitle: {
     fontSize: 72,
     fontWeight: '900',

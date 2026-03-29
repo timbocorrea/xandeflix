@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableHighlight, Image, FlatList } from 'react-native';
 import { Category, Media } from '../types';
+import { useTMDB } from '../hooks/useTMDB';
+import { useStore } from '../store/useStore';
 
 interface MediaItemProps {
   item: Media;
@@ -14,9 +16,18 @@ interface MediaItemProps {
 const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPress }: MediaItemProps) => {
   const navId = `item-${rowIndex}-${index}`;
   const [imgError, setImgError] = React.useState(false);
+  const { data: tmdbData } = useTMDB(item.title, item.type);
+  const playbackProgress = useStore((state) => state.playbackProgress);
   
   // High-quality fallback if thumbnail domain (like xvbroker.click) is down
   const fallbackImg = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop`;
+  
+  const displayImage = imgError ? fallbackImg : (tmdbData?.thumbnail || item.thumbnail);
+  // Use cover for beautiful 2:3 tmdb posters, but contain for random 16:9 IPTV logos to avoid heavy cropping 
+  const displayMode = (tmdbData?.thumbnail || imgError) ? 'cover' : 'contain';
+
+  const progress = playbackProgress[item.id];
+  const percentComplete = progress && progress.duration > 0 ? (progress.currentTime / progress.duration) * 100 : 0;
 
   return (
     <TouchableHighlight
@@ -32,9 +43,9 @@ const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPre
     >
       <View style={styles.cardInner}>
         <Image 
-          source={{ uri: imgError ? fallbackImg : item.thumbnail }} 
+          source={{ uri: displayImage }} 
           style={styles.thumbnail}
-          resizeMode="cover"
+          resizeMode={displayMode}
           // @ts-ignore
           loading="lazy"
           onError={() => setImgError(true)}
@@ -46,6 +57,13 @@ const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPre
             <View style={styles.overlayInner}>
               <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
             </View>
+          </View>
+        )}
+
+        {/* Progress Bar Indicator */}
+        {percentComplete > 0 && (
+          <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 5, backgroundColor: 'rgba(255,255,255,0.2)' }}>
+            <View style={{ height: '100%', backgroundColor: '#E50914', width: `${Math.min(100, percentComplete)}%` }} />
           </View>
         )}
       </View>

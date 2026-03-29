@@ -64,10 +64,8 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     letterSpacing: -5,
     fontFamily: 'Outfit',
-    textShadowColor: 'rgba(229, 9, 20, 0.5)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 20,
-  },
+    textShadow: '0 0 20px rgba(229, 9, 20, 0.5)',
+  } as any,
   loaderBarContainer: {
     width: 250,
     height: 4,
@@ -79,9 +77,7 @@ const styles = StyleSheet.create({
   loaderBar: {
     height: '100%',
     backgroundColor: '#E50914',
-    shadowColor: '#E50914',
-    shadowRadius: 10,
-    shadowOpacity: 0.8,
+    boxShadow: '0 0 10px rgba(229, 9, 20, 0.8)',
   } as any,
   loadingMessage: {
     color: 'rgba(255,255,255,0.5)',

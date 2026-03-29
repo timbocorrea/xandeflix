@@ -127,9 +127,143 @@ export class M3UParserService {
       }
     }
 
-    // Group by category with normalization
-    const categoriesMap: { [key: string]: Category } = {};
+    // 1. First Pass: Group series episodes
+    const seriesMap: { [key: string]: Media } = {};
+    let finalItems: Media[] = [];
+
     items.forEach(item => {
+      let isEpisode = false;
+      let seriesName = item.title;
+      let seasonNum = 1;
+      let episodeNum = 1;
+
+      // Match pattern like "The Last of Us S01 E01" or "The Last of Us T1 E1"
+      const seMatch = item.title.match(/(.*?)[\s\.\-\|]+(?:S|T)(\d{1,2})[\s\.\-\|E]*(\d{1,3})/i);
+      if (seMatch) {
+         seriesName = seMatch[1].trim();
+         seasonNum = parseInt(seMatch[2], 10);
+         episodeNum = parseInt(seMatch[3], 10);
+         isEpisode = true;
+      } else {
+        // Fallback match like "Serie Nome Ep 05"
+        const epMatch = item.title.match(/(.*?)[\s\-\|]+Ep(?:isod[io|eo])?[\s\.]+(\d{1,3})/i);
+        if (epMatch) {
+           seriesName = epMatch[1].trim();
+           episodeNum = parseInt(epMatch[2], 10);
+           isEpisode = true;
+        }
+      }
+
+      // Se passou por um episódio de uma série
+      if ((isEpisode && item.type === MediaType.SERIES) || (item.type === MediaType.SERIES && isEpisode)) {
+         const seriesKey = `${item.category}_${seriesName.toLowerCase()}`;
+         if (!seriesMap[seriesKey]) {
+            seriesMap[seriesKey] = {
+               ...item,
+               id: `series_${Math.random().toString(36).substring(2, 11)}`,
+               title: seriesName,
+               seasons: [],
+               videoUrl: '' // Série em si não é tocável
+            };
+            finalItems.push(seriesMap[seriesKey]);
+         }
+
+         const series = seriesMap[seriesKey];
+         if (!series.seasons) series.seasons = [];
+         
+         let season = series.seasons.find(s => s.seasonNumber === seasonNum);
+         if (!season) {
+            season = { seasonNumber: seasonNum, episodes: [] };
+            series.seasons.push(season);
+         }
+
+         season.episodes.push({
+            id: item.id,
+            seasonNumber: seasonNum,
+            episodeNumber: episodeNum,
+            title: `Episódio ${episodeNum}`,
+            videoUrl: item.videoUrl
+         });
+      } else {
+         finalItems.push(item);
+      }
+    });
+
+    // Sort seasons and episodes correctly inside each series
+    finalItems.forEach(item => {
+      if (item.type === MediaType.SERIES && item.seasons) {
+         item.seasons.sort((a, b) => a.seasonNumber - b.seasonNumber);
+         item.seasons.forEach(s => {
+            s.episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
+         });
+      }
+    });
+
+    // 1.5. Live Channel Quality Grouping
+    const liveGroupedItems = new Map<string, Media>();
+    const mergedItems: Media[] = [];
+    
+    // Sort qualities for ranking (higher is better)
+    const getQualityScore = (quality: string) => {
+       const q = quality.toUpperCase();
+       if (q.includes('4K')) return 100;
+       if (q.includes('H265') || q.includes('HEVC')) return 90;
+       if (q.includes('FHD') || q.includes('1080')) return 80;
+       if (q.includes('HD') || q.includes('720')) return 60;
+       if (q.includes('SD') || q.includes('480')) return 40;
+       return 50; // default unknown
+    };
+
+    finalItems.forEach(item => {
+      if (item.type === MediaType.LIVE) {
+         // Detect quality inside the name (e.g. Globo SP FHD, Globo SP H265)
+         const qMatch = item.title.match(/\\b(4K|FHD|HD|SD|H265|HEVC|1080[P|i]?|720[P|i]?|480[P|i]?)\\b/i);
+         let baseName = item.title;
+         let quality = 'SD'; // default fallback text
+
+         if (qMatch) {
+            quality = qMatch[1].toUpperCase();
+            // Remove the quality tag to find the core name of the channel
+            baseName = item.title.replace(qMatch[0], '').replace(/[\\|\\[\\]\\(\\)\\-]/g, '').replace(/\\s{2,}/g, ' ').trim();
+         } else {
+            baseName = item.title.replace(/[\\|\\[\\]\\(\\)\\-]/g, '').replace(/\\s{2,}/g, ' ').trim();
+         }
+
+         const channelKey = `${item.category}_${baseName.toLowerCase()}`;
+         
+         if (!liveGroupedItems.has(channelKey)) {
+            // First time seeing this channel, add the qualities array
+            item.qualities = [{ name: quality, url: item.videoUrl }];
+            item.title = baseName; // Update main title to clean version
+            liveGroupedItems.set(channelKey, item);
+            mergedItems.push(item);
+         } else {
+            // Already saw this channel, append the new URL to its qualities
+            const existing = liveGroupedItems.get(channelKey)!;
+            existing.qualities = existing.qualities || [];
+            
+            // Avoid exact URL duplicates
+            if (!existing.qualities.some(q => q.url === item.videoUrl)) {
+              existing.qualities.push({ name: quality, url: item.videoUrl });
+            }
+         }
+      } else {
+         mergedItems.push(item); // VOD passes through unaffected
+      }
+    });
+
+    // Sort the qualities array inside each live channel by QualityScore
+    mergedItems.forEach(item => {
+       if (item.type === MediaType.LIVE && item.qualities && item.qualities.length > 0) {
+          item.qualities.sort((a, b) => getQualityScore(b.name) - getQualityScore(a.name));
+          // Set the default videoUrl to the BEST quality stream!
+          item.videoUrl = item.qualities[0].url;
+       }
+    });
+
+    // 2. Second Pass: Group by category with normalização
+    const categoriesMap: { [key: string]: Category } = {};
+    mergedItems.forEach(item => {
       const normalizedTitle = this.normalizeCategoryTitle(item.category);
       const categoryKey = normalizedTitle.toUpperCase();
 

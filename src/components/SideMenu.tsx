@@ -91,13 +91,13 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
               <User color="white" size={20} />
             </div>
             {isExpanded && (
-              <motion.span
+              <motion.div
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                className="ml-4 font-display font-bold text-white text-lg tracking-tight whitespace-nowrap"
+                className="ml-4 inline-block font-display font-bold text-white text-lg tracking-tight whitespace-nowrap"
               >
                 Timbo
-              </motion.span>
+              </motion.div>
             )}
           </div>
         </button>
@@ -130,16 +130,16 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
                   />
                 </div>
                 {isExpanded && (
-                  <motion.span
+                  <motion.div
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     className={cn(
-                      "ml-4 font-display tracking-tight transition-colors duration-300 whitespace-nowrap",
+                      "ml-4 inline-block font-display tracking-tight transition-colors duration-300 whitespace-nowrap",
                       (isFocused || isActive) ? "text-white font-bold text-lg" : "text-gray-400 group-hover:text-white"
                     )}
                   >
                     {item.label}
-                  </motion.span>
+                  </motion.div>
                 )}
               </div>
             </button>
@@ -166,16 +166,16 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
               />
             </div>
             {isExpanded && (
-              <motion.span
+              <motion.div
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 className={cn(
-                  "ml-4 font-display tracking-tight transition-colors duration-300 whitespace-nowrap",
+                  "ml-4 inline-block font-display tracking-tight transition-colors duration-300 whitespace-nowrap",
                   focusedItem === 'logout' ? "text-red-500 font-bold text-lg" : "text-gray-400 group-hover:text-red-500"
                 )}
               >
                 Sair
-              </motion.span>
+              </motion.div>
             )}
           </div>
         </button>

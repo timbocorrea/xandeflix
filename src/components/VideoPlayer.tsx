@@ -2,13 +2,18 @@ import React, { useEffect, useRef } from 'react';
 import mpegts from 'mpegts.js';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
-import { X, Play, ExternalLink, Layout, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Media } from '../types';
+import { useStore } from '../store/useStore';
 
 interface VideoPlayerProps {
   url: string;
   mediaType: string;
+  media?: Media | null;
   onClose: () => void;
+  nextEpisode?: Media | null;
+  onPlayNextEpisode?: () => void;
   isMinimized?: boolean;
   onToggleMinimize?: () => void;
 }
@@ -30,7 +35,10 @@ function detectStrategy(proxyUrl: string): 'mpegts' | 'hls' | 'native' {
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
   url, 
   mediaType, 
+  media = null,
   onClose,
+  nextEpisode = null,
+  onPlayNextEpisode,
   isMinimized = false,
   onToggleMinimize
 }) => {
@@ -41,13 +49,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [loading, setLoading] = React.useState(true);
   const [diagnostic, setDiagnostic] = React.useState<any>(null);
   const [diagnosing, setDiagnosing] = React.useState(false);
-  const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(url));
+  
+  const hasQualities = !!(media?.type === 'live' && media?.qualities && media.qualities.length > 1);
+  const [activeQualityIndex, setActiveQualityIndex] = React.useState(0);
+  const streamUrl = hasQualities ? media.qualities![activeQualityIndex].url : url;
+  
+  const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(streamUrl));
   const authToken = localStorage.getItem('xandeflix_auth_token') || '';
+
+  // Auto-update strategy if the stream URL changes due to quality switch
+  useEffect(() => {
+    setStrategy(detectStrategy(streamUrl));
+  }, [streamUrl]);
+
+  const fallbackNextQuality = React.useCallback(() => {
+    if (hasQualities && activeQualityIndex < media.qualities!.length - 1) {
+      console.log(`[Player] Falha na reprodução. Tentando próxima qualidade: ${media.qualities![activeQualityIndex + 1].name}`);
+      setActiveQualityIndex(prev => prev + 1);
+      setError(`Sinal instável. Alternando qualidade...`);
+      setTimeout(() => setError(null), 3000);
+      return true;
+    }
+    return false;
+  }, [hasQualities, activeQualityIndex, media]);
 
   const runDiagnostic = async () => {
     setDiagnosing(true);
     try {
-      const response = await fetch(`/api/diagnostic?url=${encodeURIComponent(url)}`, {
+      const response = await fetch(`/api/diagnostic?url=${encodeURIComponent(streamUrl)}`, {
         headers: authToken ? { 'x-auth-token': authToken } : undefined,
       });
       const data = await response.json();
@@ -57,6 +86,122 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } finally {
       setDiagnosing(false);
     }
+  };
+
+  const [showCountdown, setShowCountdown] = React.useState(false);
+  const [countdown, setCountdown] = React.useState(10);
+  const [hasCancelled, setHasCancelled] = React.useState(false);
+  
+  const setPlaybackProgress = useStore((state) => state.setPlaybackProgress);
+  const progressId = media?.currentEpisode?.id || media?.id || encodeURIComponent(streamUrl);
+  const initialSeekDone = useRef(false);
+  const lastSavedTime = useRef(0);
+
+  const [isIdle, setIsIdle] = React.useState(false);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetIdleTimer = React.useCallback(() => {
+    setIsIdle(false);
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    idleTimer.current = setTimeout(() => setIsIdle(true), 5000);
+  }, []);
+
+  // Idle user detection for overlay controls
+  useEffect(() => {
+    resetIdleTimer();
+    const handleActivity = () => resetIdleTimer();
+    
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('mousedown', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
+    window.addEventListener('keydown', handleActivity);
+
+    return () => {
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('mousedown', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+    };
+  }, [resetIdleTimer]);
+
+  // Poll video time to show Up Next 10 seconds BEFORE video ends
+  useEffect(() => {
+    const interval = setInterval(() => {
+      let currentTime = 0;
+      let duration = 0;
+
+      if (strategy === 'hls' && playerRef.current) {
+        currentTime = playerRef.current.currentTime() || 0;
+        duration = playerRef.current.duration() || 0;
+      } else if (videoRef.current) {
+        currentTime = videoRef.current.currentTime || 0;
+        duration = videoRef.current.duration || 0;
+      }
+
+      if (!duration || duration === Infinity) return;
+
+      if (currentTime > 0 && duration > 0) {
+        // Auto-resume from previous progress point on first load
+        if (!initialSeekDone.current) {
+          const allProgress = useStore.getState().playbackProgress;
+          const savedProgress = allProgress[progressId];
+          if (savedProgress && savedProgress.currentTime > 15 && savedProgress.currentTime < duration - 15) {
+            if (strategy === 'hls' && playerRef.current && typeof playerRef.current.currentTime === 'function') {
+              playerRef.current.currentTime(savedProgress.currentTime);
+            } else if (videoRef.current) {
+              videoRef.current.currentTime = savedProgress.currentTime;
+            }
+          }
+          initialSeekDone.current = true;
+        }
+
+        // Save progress every 5 seconds to localStorage
+        if (Math.abs(currentTime - lastSavedTime.current) > 5) {
+          lastSavedTime.current = currentTime;
+          setPlaybackProgress(progressId, currentTime, duration);
+        }
+      }
+
+      if (!onPlayNextEpisode) return;
+      const remaining = duration - currentTime;
+
+      // Show countdown when 10 seconds or less remain
+      if (remaining <= 10.5 && remaining > 0) {
+        setShowCountdown(true);
+        setCountdown(Math.max(1, Math.ceil(remaining)));
+      } else {
+        setShowCountdown(false);
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [strategy, onPlayNextEpisode]);
+
+  const skipTime = React.useCallback((amount: number) => {
+    let currentTime = 0;
+    let duration = 0;
+    if (strategy === 'hls' && playerRef.current && typeof playerRef.current.currentTime === 'function') {
+      currentTime = playerRef.current.currentTime() || 0;
+      duration = playerRef.current.duration() || 0;
+      if (duration && duration !== Infinity) {
+         playerRef.current.currentTime(Math.min(duration, Math.max(0, currentTime + amount)));
+      } else {
+         playerRef.current.currentTime(Math.max(0, currentTime + amount));
+      }
+    } else if (videoRef.current) {
+      currentTime = videoRef.current.currentTime || 0;
+      duration = videoRef.current.duration || 0;
+      if (duration && duration !== Infinity) {
+         videoRef.current.currentTime = Math.min(duration, Math.max(0, currentTime + amount));
+      } else {
+         videoRef.current.currentTime = Math.max(0, currentTime + amount);
+      }
+    }
+  }, [strategy]);
+
+  const triggerNext = () => {
+    if (onPlayNextEpisode) onPlayNextEpisode();
   };
 
   // ── Cleanup on unmount ──
@@ -81,6 +226,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     destroyPlayer();
     setLoading(true);
     setError(null);
+    setShowCountdown(false);
 
     const video = videoRef.current;
     if (!video) return;
@@ -97,11 +243,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     // Keyboard handler
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
       if (e.key === 'Escape' || e.key === 'Backspace') onClose();
+      else if (e.key === 'ArrowRight') skipTime(10);
+      else if (e.key === 'ArrowLeft') skipTime(-10);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [url, strategy]);
+  }, [streamUrl, strategy, skipTime]);
 
   // ── mpegts.js for raw MPEG-TS streams ──
   function initMpegTs(video: HTMLVideoElement) {
@@ -112,7 +262,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     // Web Workers can't resolve relative URLs, so we need absolute
-    const absoluteUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+    const absoluteUrl = streamUrl.startsWith('http') ? streamUrl : `${window.location.origin}${streamUrl}`;
 
     const player = mpegts.createPlayer({
       type: 'mpegts',
@@ -121,10 +271,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, {
       enableWorker: true,
       enableStashBuffer: true,
-      stashInitialSize: 1024 * 128, // 128KB initial buffer
-      liveBufferLatencyChasing: mediaType === 'live',
-      liveBufferLatencyMaxLatency: 10, // More forgiving latency (10s)
-      liveBufferLatencyMinRemain: 1, // Minimum 1s stay in buffer
+      stashInitialSize: 1024 * 1024 * 3, // 3MB initial buffer to prevent freezing
+      liveBufferLatencyChasing: false, // Don't chase latency to allow buffer accumulation
+      liveBufferLatencyMaxLatency: 30, // Extremely forgiving latency (30s)
+      liveBufferLatencyMinRemain: 5, // Minimum 5s stay in buffer
       autoCleanupSourceBuffer: true,
       autoCleanupMaxBackwardDuration: 60,
       autoCleanupMinBackwardDuration: 30,
@@ -139,6 +289,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     player.on(mpegts.Events.ERROR, (errorType: any, errorDetail: any, errorInfo: any) => {
       console.error('[mpegts] Error:', errorType, errorDetail, errorInfo);
+      if (fallbackNextQuality()) return;
       // Try HLS as fallback
       if (strategy === 'mpegts') {
         console.log('[Player] mpegts failed, trying HLS fallback...');
@@ -154,8 +305,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.addEventListener('playing', () => setLoading(false));
     video.addEventListener('waiting', () => setLoading(true));
     video.addEventListener('canplay', () => setLoading(false));
+    video.addEventListener('ended', triggerNext);
     video.addEventListener('error', () => {
       console.error('[mpegts] Video element error');
+      if (fallbackNextQuality()) return;
       if (strategy === 'mpegts') {
         destroyPlayer();
         setStrategy('hls');
@@ -185,21 +338,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         html5: {
           vhs: {
             overrideNative: true,
-            enableLowInitialPlaylist: true,
-            fastStart: true,
+            enableLowInitialPlaylist: false, // Favor higher quality list if available
+            fastStart: false, // Don't start too fast, build buffer first
+            goalBufferLength: 15, // Force 15+ seconds of buffer ahead
+            maxGoalBufferLength: 30, // Don't allow it to buffer more than 30s to save memory
           },
           nativeVideoTracks: false,
           nativeAudioTracks: false,
           nativeTextTracks: false,
         },
-        sources: [{ src: url, type: 'application/x-mpegURL' }],
+        sources: [{ src: streamUrl, type: 'application/x-mpegURL' }],
       }, () => {
         setLoading(false);
       });
 
+      player.on('error', () => {
+        if (fallbackNextQuality()) return;
+      });
+
       player.on('waiting', () => setLoading(true));
       player.on('playing', () => setLoading(false));
+      player.on('ended', triggerNext);
       player.on('error', () => {
+        if (fallbackNextQuality()) return;
         const err = player.error();
         console.error('[VideoJS] Error:', err?.message);
         // Try native as last resort
@@ -219,15 +380,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // ── Native <video> for MP4/WebM or last-resort ──
   function initNative(video: HTMLVideoElement) {
     video.style.display = '';
-    video.src = url;
+    video.src = streamUrl;
     video.autoplay = true;
     video.controls = true;
 
     const onPlaying = () => setLoading(false);
     const onWaiting = () => setLoading(true);
     const onCanPlay = () => setLoading(false);
+    const onEnded = triggerNext;
     const onError = () => {
       console.error('[Native] Video element error');
+      if (fallbackNextQuality()) return;
       setError('O vídeo não pôde ser carregado. O servidor ou formato é incompatível.');
       setLoading(false);
       runDiagnostic();
@@ -236,6 +399,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.addEventListener('playing', onPlaying);
     video.addEventListener('waiting', onWaiting);
     video.addEventListener('canplay', onCanPlay);
+    video.addEventListener('ended', onEnded);
     video.addEventListener('error', onError);
 
     video.load();
@@ -247,6 +411,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         video.removeEventListener('playing', onPlaying);
         video.removeEventListener('waiting', onWaiting);
         video.removeEventListener('canplay', onCanPlay);
+        video.removeEventListener('ended', onEnded);
         video.removeEventListener('error', onError);
         video.pause();
         video.removeAttribute('src');
@@ -274,9 +439,72 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
       className={`fixed z-[100] bg-black flex items-center justify-center overflow-hidden shadow-2xl ${
         isMinimized ? 'border-2 border-white/20' : ''
+      } ${
+        isIdle ? 'cursor-none' : ''
       }`}
     >
-      <div className="absolute top-4 right-4 z-[110] flex gap-3">
+      <div 
+        className={`absolute top-4 right-4 z-[110] flex gap-3 transition-opacity duration-500 delay-100 ${
+          isIdle && !isMinimized ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
+      >
+        {nextEpisode && onPlayNextEpisode && !isMinimized && (
+          <button
+            onClick={onPlayNextEpisode}
+            className="px-4 py-3 backdrop-blur-xl bg-black/50 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 flex items-center gap-3 shadow-lg"
+            title={`Próximo episódio: ${nextEpisode.currentEpisode?.title || nextEpisode.title}`}
+          >
+            <SkipForward className="text-white w-5 h-5" />
+            <div className="text-left">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/55">Próximo</div>
+              <div className="text-sm text-white font-semibold max-w-48 truncate">
+                {nextEpisode.currentEpisode?.title || nextEpisode.title}
+              </div>
+            </div>
+          </button>
+        )}
+        
+        {!isMinimized && (
+          <>
+            {hasQualities && (
+              <div className="relative group/quality">
+                <button 
+                  className="flex items-center gap-2 p-3 font-semibold text-sm backdrop-blur-xl bg-black/40 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 shadow-lg text-white"
+                  title="Alterar Qualidade de Vídeo"
+                >
+                  <Settings className="w-5 h-5" />
+                  <span>{media.qualities![activeQualityIndex].name}</span>
+                </button>
+                <div className="absolute right-0 top-full mt-2 w-32 bg-zinc-900 border border-white/10 rounded-xl overflow-hidden opacity-0 pointer-events-none group-hover/quality:opacity-100 group-hover/quality:pointer-events-auto transition-opacity duration-200">
+                  {media.qualities!.map((q, idx) => (
+                    <button 
+                      key={idx}
+                      onClick={() => setActiveQualityIndex(idx)}
+                      className={`block w-full text-left px-4 py-3 text-sm transition-colors ${idx === activeQualityIndex ? 'bg-red-600 font-bold text-white' : 'text-gray-300 hover:bg-zinc-800 hover:text-white'}`}
+                    >
+                      {q.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button 
+              onClick={() => skipTime(-10)}
+              className="p-3 backdrop-blur-xl bg-black/40 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
+              title="Voltar 10 segundos"
+            >
+              <Rewind className="text-white w-6 h-6 group-hover:-translate-x-1 transition-transform" />
+            </button>
+            <button 
+              onClick={() => skipTime(10)}
+              className="p-3 backdrop-blur-xl bg-black/40 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
+              title="Avançar 10 segundos"
+            >
+              <FastForward className="text-white w-6 h-6 group-hover:translate-x-1 transition-transform" />
+            </button>
+          </>
+        )}
+
         {onToggleMinimize && (
           <button 
             onClick={onToggleMinimize}
@@ -364,6 +592,45 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         </div>
       )}
+
+      {/* Auto-Play Countdown Overlay */}
+      <AnimatePresence>
+        {showCountdown && nextEpisode && !isMinimized && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className="absolute bottom-12 right-12 z-[120] bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col items-start min-w-[320px] overflow-hidden"
+          >
+            <div className="text-gray-400 text-sm tracking-wider uppercase mb-1">Próximo episódio em {countdown}s</div>
+            <div className="text-white text-xl font-bold mb-6 max-w-full truncate">{nextEpisode.currentEpisode?.title || nextEpisode.title}</div>
+            
+            <div className="flex gap-4 w-full relative z-10">
+              <button
+                onClick={onClose}
+                className="flex-1 py-3 px-4 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors font-semibold text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (onPlayNextEpisode) onPlayNextEpisode();
+                }}
+                className="flex-1 py-3 px-4 bg-white hover:bg-gray-200 text-black rounded-lg transition-colors font-semibold flex items-center justify-center gap-2 text-sm"
+              >
+                <Play className="w-4 h-4 fill-black" />
+                Assistir
+              </button>
+            </div>
+            
+            {/* Progress bar */}
+            <div 
+              className="absolute bottom-0 left-0 h-1.5 bg-[#E50914]" 
+              style={{ width: `${(countdown / 10) * 100}%`, transition: 'width 0.5s linear' }} 
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div ref={containerRef} className="w-full h-full">
         <video
