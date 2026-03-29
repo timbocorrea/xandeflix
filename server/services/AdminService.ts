@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { supabase } from '../lib/supabase';
 
 export interface UserRecord {
   id: string;
@@ -8,6 +9,7 @@ export interface UserRecord {
   password?: string;
   playlistUrl: string;
   isBlocked: boolean;
+  role?: string;
   lastAccess?: string;
 }
 
@@ -49,6 +51,28 @@ export class AdminService {
   }
 
   public static async listUsers(): Promise<UserRecord[]> {
+    try {
+      const { data, error } = await supabase
+        .from('xandeflix_users')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      if (data && data.length > 0) {
+        return data.map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          username: u.username,
+          password: u.password,
+          playlistUrl: u.playlist_url,
+          isBlocked: u.is_blocked,
+          role: u.role,
+          lastAccess: u.last_access
+        })) as UserRecord[];
+      }
+    } catch (err) {
+      console.warn('[ADMIN] Supabase error (listing users), falling back to local file:', err);
+    }
     return this.users;
   }
 
@@ -99,15 +123,46 @@ export class AdminService {
   public static async authenticate(identifier: string, token?: string): Promise<{ type: 'admin' | 'user'; data?: UserRecord } | null> {
     const adminSecret = process.env.ADMIN_SECRET_KEY;
     
-    if (identifier === 'admin' && !adminSecret) {
-      console.warn('[AUTH] ADMIN_SECRET_KEY is not configured.');
-    }
-
+    // Legacy Admin Check (for backward compatibility if needed)
     if (identifier === 'admin' && adminSecret && token === adminSecret) {
-      console.log('[AUTH] Admin authenticated successfully');
+      console.log('[AUTH] Admin authenticated successfully via Secret Key');
       return { type: 'admin' };
     }
 
+    try {
+      const { data: user, error } = await supabase
+        .from('xandeflix_users')
+        .select('*')
+        .eq('username', identifier)
+        .eq('password', token)
+        .single();
+
+      if (user && !user.is_blocked) {
+        // Atualiza último acesso
+        await supabase
+          .from('xandeflix_users')
+          .update({ last_access: new Date().toISOString() })
+          .eq('id', user.id);
+
+        console.log(`[AUTH] User authenticated via Supabase: ${user.name} (${user.id}) as ${user.role || 'user'}`);
+        return { 
+          type: user.role === 'admin' ? 'admin' : 'user', 
+          data: {
+            id: user.id,
+            name: user.name,
+            username: user.username,
+            playlistUrl: user.playlist_url,
+            isBlocked: user.is_blocked,
+            role: user.role,
+            lastAccess: user.last_access
+          }
+        };
+      }
+    } catch (err) {
+      console.warn('[AUTH] Supabase check failed, checking local storage...', err);
+    }
+
+    // Fallback to local users.json
     const user = this.users.find(u => 
       (u.id === identifier || u.username === identifier) && 
       (!u.password || u.password === token) &&
@@ -117,7 +172,7 @@ export class AdminService {
     if (user) {
       user.lastAccess = new Date().toISOString();
       this.saveUsers();
-      console.log(`[AUTH] User authenticated: ${user.name} (${user.id})`);
+      console.log(`[AUTH] User authenticated via Local JSON: ${user.name} (${user.id})`);
       return { type: 'user', data: user };
     }
 

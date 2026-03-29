@@ -217,16 +217,16 @@ export class M3UParserService {
     finalItems.forEach(item => {
       if (item.type === MediaType.LIVE) {
          // Detect quality inside the name (e.g. Globo SP FHD, Globo SP H265)
-         const qMatch = item.title.match(/\\b(4K|FHD|HD|SD|H265|HEVC|1080[P|i]?|720[P|i]?|480[P|i]?)\\b/i);
+         const qMatch = item.title.match(/\b(4K|FHD|FULL\s?HD|HD|SD|H265|HEVC|1080[P|i]?|720[P|i]?|480[P|i]?)\b/i);
          let baseName = item.title;
          let quality = 'SD'; // default fallback text
 
          if (qMatch) {
-            quality = qMatch[1].toUpperCase();
+            quality = qMatch[1].toUpperCase().replace('FULL HD', 'FHD').replace('FULLHD', 'FHD');
             // Remove the quality tag to find the core name of the channel
-            baseName = item.title.replace(qMatch[0], '').replace(/[\\|\\[\\]\\(\\)\\-]/g, '').replace(/\\s{2,}/g, ' ').trim();
+            baseName = item.title.replace(qMatch[0], '').replace(/[|\[\]\(\)\-]/g, '').replace(/\s{2,}/g, ' ').trim();
          } else {
-            baseName = item.title.replace(/[\\|\\[\\]\\(\\)\\-]/g, '').replace(/\\s{2,}/g, ' ').trim();
+            baseName = item.title.replace(/[|\[\]\(\)\-]/g, '').replace(/\s{2,}/g, ' ').trim();
          }
 
          const channelKey = `${item.category}_${baseName.toLowerCase()}`;
@@ -234,7 +234,7 @@ export class M3UParserService {
          if (!liveGroupedItems.has(channelKey)) {
             // First time seeing this channel, add the qualities array
             item.qualities = [{ name: quality, url: item.videoUrl }];
-            item.title = baseName; // Update main title to clean version
+            item.title = baseName || item.title; // Update main title to clean version
             liveGroupedItems.set(channelKey, item);
             mergedItems.push(item);
          } else {
@@ -244,7 +244,16 @@ export class M3UParserService {
             
             // Avoid exact URL duplicates
             if (!existing.qualities.some(q => q.url === item.videoUrl)) {
-              existing.qualities.push({ name: quality, url: item.videoUrl });
+              let newLabel = quality;
+              const sameLabelCount = existing.qualities.filter(q => q.name.startsWith(quality)).length;
+              if (sameLabelCount > 0) {
+                 if (sameLabelCount === 1) {
+                    const firstMatch = existing.qualities.find(q => q.name === quality);
+                    if (firstMatch) firstMatch.name = `${quality} 1`;
+                 }
+                 newLabel = `${quality} ${sameLabelCount + 1}`;
+              }
+              existing.qualities.push({ name: newLabel, url: item.videoUrl });
             }
          }
       } else {

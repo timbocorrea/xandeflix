@@ -99,11 +99,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const [isIdle, setIsIdle] = React.useState(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showQualityMenu, setShowQualityMenu] = React.useState(false);
 
   const resetIdleTimer = React.useCallback(() => {
     setIsIdle(false);
     if (idleTimer.current) clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => setIsIdle(true), 5000);
+    idleTimer.current = setTimeout(() => {
+      setIsIdle(true);
+      setShowQualityMenu(false); // Hide menu when idle
+    }, 5000);
   }, []);
 
   // Idle user detection for overlay controls
@@ -467,25 +471,50 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         {!isMinimized && (
           <>
             {hasQualities && (
-              <div className="relative group/quality">
+              <div className="relative">
                 <button 
-                  className="flex items-center gap-2 p-3 font-semibold text-sm backdrop-blur-xl bg-black/40 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 shadow-lg text-white"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowQualityMenu(!showQualityMenu);
+                  }}
+                  className={`flex items-center gap-2 px-4 py-3 font-bold text-sm backdrop-blur-xl border border-white/10 rounded-2xl transition-all duration-300 shadow-lg ${
+                    showQualityMenu ? 'bg-white/20 text-white' : 'bg-black/40 text-gray-300 hover:bg-white/10 hover:text-white'
+                  }`}
                   title="Alterar Qualidade de Vídeo"
                 >
-                  <Settings className="w-5 h-5" />
+                  <Settings className={`w-5 h-5 transition-transform duration-300 ${showQualityMenu ? 'rotate-90' : ''}`} />
                   <span>{media.qualities![activeQualityIndex].name}</span>
                 </button>
-                <div className="absolute right-0 top-full mt-2 w-32 bg-zinc-900 border border-white/10 rounded-xl overflow-hidden opacity-0 pointer-events-none group-hover/quality:opacity-100 group-hover/quality:pointer-events-auto transition-opacity duration-200">
-                  {media.qualities!.map((q, idx) => (
-                    <button 
-                      key={idx}
-                      onClick={() => setActiveQualityIndex(idx)}
-                      className={`block w-full text-left px-4 py-3 text-sm transition-colors ${idx === activeQualityIndex ? 'bg-red-600 font-bold text-white' : 'text-gray-300 hover:bg-zinc-800 hover:text-white'}`}
+
+                <AnimatePresence>
+                  {showQualityMenu && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-[110%] w-36 bg-zinc-900/95 backdrop-blur-2xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-[120] py-2"
                     >
-                      {q.name}
-                    </button>
-                  ))}
-                </div>
+                      {media.qualities!.map((q, idx) => (
+                        <button 
+                          key={idx}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveQualityIndex(idx);
+                            setShowQualityMenu(false);
+                          }}
+                          className={`block w-full text-left px-5 py-3 text-sm transition-colors ${
+                            idx === activeQualityIndex 
+                              ? 'bg-[#E50914]/20 text-[#E50914] font-bold border-l-2 border-[#E50914]' 
+                              : 'text-gray-300 hover:bg-white/5 hover:text-white border-l-2 border-transparent'
+                          }`}
+                        >
+                          {q.name}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )}
             <button 
