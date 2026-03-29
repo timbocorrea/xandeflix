@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.ts';
 
 export interface UserRecord {
   id: string;
@@ -46,8 +46,12 @@ export class AdminService {
   }
 
   // Auto-load on first call
-  static {
+  private static initialized = false;
+
+  public static initialize() {
+    if (this.initialized) return;
     this.loadUsers();
+    this.initialized = true;
   }
 
   public static async listUsers(): Promise<UserRecord[]> {

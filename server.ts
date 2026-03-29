@@ -7,16 +7,16 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 // Import Services
-import { M3UParserService } from './server/services/M3UParserService';
-import { StreamProxyService } from './server/services/StreamProxyService';
-import { CacheManager } from './server/services/CacheManager';
-import { AdminService } from './server/services/AdminService';
-import { AuthSessionService } from './server/services/AuthSessionService';
-import { TMDBService } from './server/services/TMDBService';
+import { M3UParserService } from './server/services/M3UParserService.ts';
+import { StreamProxyService } from './server/services/StreamProxyService.ts';
+import { CacheManager } from './server/services/CacheManager.ts';
+import { AdminService } from './server/services/AdminService.ts';
+import { AuthSessionService } from './server/services/AuthSessionService.ts';
+import { TMDBService } from './server/services/TMDBService.ts';
 
 // Import Middleware
-import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security';
-import { adminAuthMiddleware } from './server/middleware/adminAuth';
+import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security.ts';
+import { adminAuthMiddleware } from './server/middleware/adminAuth.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -93,6 +93,7 @@ export async function configApp() {
   const PORT = Number(process.env.PORT || 3000);
 
   console.log('[DEBUG] Iniciando servidor Xandeflix...');
+  AdminService.initialize();
   console.log('[DEBUG] Supabase URL configurada:', !!process.env.VITE_SUPABASE_URL);
 
   // Apply base middlewares
