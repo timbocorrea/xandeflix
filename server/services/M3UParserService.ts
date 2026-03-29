@@ -7,13 +7,17 @@ export class M3UParserService {
   private static parseAttributes(attributes: string, name: string): Partial<Media> {
     const logoMatch = attributes.match(/tvg-logo="([^"]+)"/);
     const categoryMatch = attributes.match(/group-title="([^"]+)"/);
+    const tvgIdMatch = attributes.match(/tvg-id="([^"]+)"/);
+    const tvgNameMatch = attributes.match(/tvg-name="([^"]+)"/);
     
     const category = categoryMatch ? categoryMatch[1] : 'Geral';
     const catLower = category.toLowerCase();
     const nameLower = name.toLowerCase();
 
+    // Default to Live
     let type: MediaType = MediaType.LIVE;
 
+    // Advanced Movie Detection
     const movieKeywords = [
       'filme', 'movie', 'vod', '4k', 'ultra', '1080p', 'films', 'filmes', 'movies',
       'lancamentos', 'lançamentos', 'animacao', 'animação', 'acao', 'ação', 'comedia', 'comédia',
@@ -21,15 +25,19 @@ export class M3UParserService {
       'ficcao', 'ficção', 'aventura', 'infantil', 'kids', 'cinema', 'premiere', '2024', '2023', '2022',
       'marvel', 'dc comics', 'disney', 'pixar'
     ];
+    
+    // Advanced Series Detection (including S01E01 patterns)
     const seriesKeywords = [
       'serie', 'series', 'série', 'séries', 'season', 'temporada', 'novela', 'episodio', 'episódio', 
       'ep ', 'ep.', 'animes', 'desenhos', 'kids series', 'netflix series', 'hbo series'
     ];
 
-    if (movieKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
-      type = MediaType.MOVIE;
-    } else if (seriesKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
+    const isSeriesPattern = /S\d{1,2}E\d{1,2}/i.test(name) || /T\d{1,2}E\d{1,2}/i.test(name);
+
+    if (isSeriesPattern || seriesKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
       type = MediaType.SERIES;
+    } else if (movieKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
+      type = MediaType.MOVIE;
     }
 
     let thumbnail = logoMatch ? logoMatch[1] : `https://picsum.photos/seed/${encodeURIComponent(name)}/400/225`;
@@ -49,8 +57,24 @@ export class M3UParserService {
       description: `Conteúdo da categoria ${category}`,
       year: 2024,
       rating: '12+',
-      duration: type === MediaType.LIVE ? 'Ao Vivo' : 'VOD'
-    };
+      duration: type === MediaType.LIVE ? 'Ao Vivo' : 'VOD',
+      // EPG Metadata
+      tvgId: tvgIdMatch ? tvgIdMatch[1] : undefined,
+      tvgName: tvgNameMatch ? tvgNameMatch[1] : undefined
+    } as any;
+  }
+
+  /**
+   * Normalizes category names to avoid duplicates like "FILMES 4K" and "4K Filmes"
+   */
+  private static normalizeCategoryTitle(title: string): string {
+    let normalized = title.trim();
+    
+    // Example: remove standard prefixes/suffixes
+    normalized = normalized.replace(/^BR[\s-]*\|?[\s-]*/i, '');
+    normalized = normalized.replace(/^PT[\s-]*\|?[\s-]*/i, '');
+    
+    return normalized;
   }
 
   /**
@@ -92,22 +116,7 @@ export class M3UParserService {
           
         currentItem = this.parseAttributes(attributes, name);
       } else if (line.startsWith('http')) {
-        if (!currentItem) {
-          const name = `Conteúdo ${items.length + 1}`;
-          const thumbnail = `https://picsum.photos/seed/link-${items.length}/400/225`;
-          currentItem = {
-            id: Math.random().toString(36).substring(2, 11),
-            title: name,
-            thumbnail,
-            backdrop: thumbnail,
-            category: 'Geral',
-            type: MediaType.LIVE,
-            description: `Transmissão #${items.length + 1}`,
-            year: 2024,
-            rating: '12+',
-            duration: 'Ao Vivo'
-          } as Media;
-        }
+        if (!currentItem) continue; // Skip orphan links
 
         const streamUrl = line;
         onParsedUrl(streamUrl);
@@ -118,23 +127,26 @@ export class M3UParserService {
       }
     }
 
-    // Group by category
+    // Group by category with normalization
     const categoriesMap: { [key: string]: Category } = {};
     items.forEach(item => {
-      if (!categoriesMap[item.category]) {
-        categoriesMap[item.category] = {
-          id: item.category.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-          title: item.category,
+      const normalizedTitle = this.normalizeCategoryTitle(item.category);
+      const categoryKey = normalizedTitle.toUpperCase();
+
+      if (!categoriesMap[categoryKey]) {
+        categoriesMap[categoryKey] = {
+          id: normalizedTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          title: normalizedTitle,
           type: item.type,
           items: []
         };
       }
       
-      const currentCat = categoriesMap[item.category];
+      const currentCat = categoriesMap[categoryKey];
       if (currentCat.items.length < 500) {
         currentCat.items.push(item);
         
-        // Refine category type based on majority of items
+        // Refine category type based on content
         if (item.type === MediaType.MOVIE) currentCat.type = MediaType.MOVIE;
         else if (item.type === MediaType.SERIES) currentCat.type = MediaType.SERIES;
       }

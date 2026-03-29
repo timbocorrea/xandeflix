@@ -30,6 +30,20 @@ const authorizedDomains = new Set<string>(['dnsd1.space', 'localhost', '127.0.0.
 const playlistCache = new CacheManager<any>(30); // 30 minutes cache
 const pendingRequests = new Map<string, Promise<any>>();
 
+// Axios helper with retry logic
+async function fetchWithRetry(url: string, options: any, retries = 3, backoff = 1000) {
+  try {
+    return await axios.get(url, options);
+  } catch (error: any) {
+    if (retries > 0 && (!error.response || error.response.status >= 500)) {
+      console.log(`[RETRY] Fetch failed for ${url.substring(0, 40)}... Retrying in ${backoff}ms. (${retries} left)`);
+      await new Promise(resolve => setTimeout(resolve, backoff));
+      return fetchWithRetry(url, options, retries - 1, backoff * 2);
+    }
+    throw error;
+  }
+}
+
 
 // Seed whitelist from environment
 if (process.env.PLAYLIST_URL) {
