@@ -63,6 +63,7 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
                 <View 
                   className="hero-gradient-overlay"
                 />
+                <View pointerEvents="none" style={styles.heroShade} />
               </ImageBackground>
             </View>
           </motion.div>
@@ -151,9 +152,9 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
 
 const styles = StyleSheet.create({
   container: {
-    height: SCREEN_HEIGHT * 0.7,
+    height: SCREEN_HEIGHT * 0.82,
     justifyContent: 'flex-end',
-    paddingBottom: 140,
+    paddingBottom: 120,
   },
   heroBackground: {
     position: 'absolute',
@@ -173,10 +174,18 @@ const styles = StyleSheet.create({
     backgroundRepeat: 'no-repeat',
   },
   heroInfo: {
+    position: 'relative',
     maxWidth: 900,
     marginLeft: 20,
     zIndex: 10,
   },
+  heroShade: {
+    position: 'absolute',
+    inset: 0,
+    width: '70%',
+    backgroundImage: 'linear-gradient(to right, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.76) 42%, rgba(0,0,0,0.35) 74%, rgba(0,0,0,0) 100%)',
+    zIndex: 1,
+  } as any,
   heroTitle: {
     fontSize: 72,
     fontWeight: '900',

@@ -34,10 +34,20 @@ html, body {
 }
 
 .hero-gradient-overlay {
-  background: linear-gradient(to right, #050505 0%, rgba(5,5,5,0.85) 25%, rgba(5,5,5,0.4) 50%, rgba(5,5,5,0) 80%),
-              linear-gradient(to bottom, rgba(5,5,5,0) 0%, rgba(5,5,5,0.4) 60%, rgba(5,5,5,1) 100%);
-  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
   height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(
+    to right,
+    rgba(5, 5, 5, 0.96) 0%,
+    rgba(5, 5, 5, 0.9) 45%,
+    rgba(5, 5, 5, 0.55) 75%,
+    rgba(5, 5, 5, 0) 100%
+  );
 }
 
 /* Custom scrollbar for a Netflix-like look */

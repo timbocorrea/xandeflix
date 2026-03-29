@@ -362,7 +362,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Outfit',
   },
   categoriesContainer: {
-    marginTop: -40, // Reduced overlap to increase distance from hero
+    marginTop: 36,
     zIndex: 20,
   },
   emptyContainer: {
