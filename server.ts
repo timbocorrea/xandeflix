@@ -424,6 +424,16 @@ export async function configApp() {
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
+  // Middleware de Erro Global para Depuração
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error('[FATAL ERROR]', err);
+    res.status(500).json({ 
+      error: 'Internal Server Error', 
+      message: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined 
+    });
+  });
+
   // No Vercel, o Vercel mesmo gerencia a porta, então só ouvimos localmente
   if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     app.listen(PORT, '0.0.0.0', () => {
