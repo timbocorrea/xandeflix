@@ -15,8 +15,16 @@ interface GridItemProps {
 }
 
 const GridItem = React.memo(({ item, onPress, index, cardWidth, isCompact }: GridItemProps) => {
-  const { data: tmdbData } = useTMDB(item.title, item.type);
+  const { data: tmdbData, loading: tmdbLoading } = useTMDB(item.title, item.type);
   const [imgError, setImgError] = useState(false);
+
+  // Strategy "Efeito Pulo": Hide unlisted items without covers (excluding live channels)
+  const isLiveChannel = item.type === 'live';
+  const hasNoCover = !item.thumbnail && !tmdbData?.thumbnail;
+  
+  if (!isLiveChannel && hasNoCover && !tmdbLoading) {
+    return null;
+  }
 
   const displayImage = imgError
     ? 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop'

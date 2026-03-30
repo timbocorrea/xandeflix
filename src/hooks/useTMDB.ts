@@ -17,12 +17,13 @@ interface TMDBData {
  */
 export const useTMDB = (title: string | undefined, type: string | undefined) => {
   const [data, setData] = useState<TMDBData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(type !== 'live');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!title || !type || type === 'live') {
       setData(null);
+      setLoading(false);
       return;
     }
 

@@ -33,8 +33,16 @@ const MediaItem = React.memo(({
 }: MediaItemProps) => {
   const navId = `item-${rowIndex}-${index}`;
   const [imgError, setImgError] = React.useState(false);
-  const { data: tmdbData } = useTMDB(item.title, item.type);
+  const { data: tmdbData, loading: tmdbLoading } = useTMDB(item.title, item.type);
   const playbackProgress = useStore((state) => state.playbackProgress);
+  
+  // Strategy "Efeito Pulo": Hide unlisted items without covers (excluding live channels)
+  const isLiveChannel = item.type === 'live';
+  const hasNoCover = !item.thumbnail && !tmdbData?.thumbnail;
+  
+  if (!isLiveChannel && hasNoCover && !tmdbLoading) {
+    return null;
+  }
   
   // High-quality fallback if thumbnail domain (like xvbroker.click) is down
   const fallbackImg = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop`;
