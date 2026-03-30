@@ -7,16 +7,16 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 // Import Services
-import { M3UParserService } from './server/services/M3UParserService';
-import { StreamProxyService } from './server/services/StreamProxyService';
-import { CacheManager } from './server/services/CacheManager';
-import { AdminService } from './server/services/AdminService';
-import { AuthSessionService } from './server/services/AuthSessionService';
-import { TMDBService } from './server/services/TMDBService';
+import { M3UParserService } from './server/services/M3UParserService.js';
+import { StreamProxyService } from './server/services/StreamProxyService.js';
+import { CacheManager } from './server/services/CacheManager.js';
+import { AdminService } from './server/services/AdminService.js';
+import { AuthSessionService } from './server/services/AuthSessionService.js';
+import { TMDBService } from './server/services/TMDBService.js';
 
 // Import Middleware
-import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security';
-import { adminAuthMiddleware } from './server/middleware/adminAuth';
+import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security.js';
+import { adminAuthMiddleware } from './server/middleware/adminAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

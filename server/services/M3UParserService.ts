@@ -1,4 +1,4 @@
-import { Category, Media, MediaType } from "../../src/types";
+import { Category, Media, MediaType } from "../../src/types/index.js";
 
 export class M3UParserService {
   /**

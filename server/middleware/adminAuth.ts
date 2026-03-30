@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { AuthSessionService } from '../services/AuthSessionService';
+import { AuthSessionService } from '../services/AuthSessionService.js';
 
 /**
  * Middleware for validating admin privileges

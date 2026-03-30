@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.js';
 
 export interface UserRecord {
   id: string;
