@@ -101,6 +101,10 @@ export class AdminService {
   }
 
   private static async listSupabaseUsers(): Promise<UserRecord[]> {
+    if (!supabase) {
+      return [];
+    }
+
     try {
       const { data, error } = await supabase
         .from('xandeflix_users')
@@ -120,6 +124,9 @@ export class AdminService {
 
   private static async findSupabaseUserById(userId: string): Promise<UserRecord | null> {
     if (!this.isUuid(userId)) {
+      return null;
+    }
+    if (!supabase) {
       return null;
     }
 
@@ -209,6 +216,10 @@ export class AdminService {
 
     if (this.isUuid(userId)) {
       try {
+        if (!supabase) {
+          throw new Error('Supabase indisponível');
+        }
+
         const { data, error } = await supabase
           .from('xandeflix_users')
           .update({ is_blocked: blocked })
@@ -248,6 +259,10 @@ export class AdminService {
 
     if (this.isUuid(userId)) {
       try {
+        if (!supabase) {
+          throw new Error('Supabase indisponível');
+        }
+
         const { data: updatedUser, error } = await supabase
           .from('xandeflix_users')
           .update({
@@ -305,6 +320,10 @@ export class AdminService {
     };
 
     try {
+      if (!supabase) {
+        throw new Error('Supabase indisponível');
+      }
+
       const { data, error } = await supabase
         .from('xandeflix_users')
         .insert({
@@ -341,6 +360,10 @@ export class AdminService {
 
     if (this.isUuid(userId)) {
       try {
+        if (!supabase) {
+          throw new Error('Supabase indisponível');
+        }
+
         const { data, error } = await supabase
           .from('xandeflix_users')
           .delete()
@@ -385,6 +408,10 @@ export class AdminService {
     }
 
     try {
+      if (!supabase) {
+        throw new Error('Supabase indisponível');
+      }
+
       const { data: user, error } = await supabase
         .from('xandeflix_users')
         .select('*')
