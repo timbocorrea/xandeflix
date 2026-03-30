@@ -46,7 +46,9 @@ export const useStore = create<XandeflixState>((set) => ({
   isSettingsVisible: false,
   isUsingMock: false,
   // Persist admin mode across page reloads
-  isAdminMode: localStorage.getItem('xandeflix_admin_mode') === 'true',
+  isAdminMode:
+    localStorage.getItem('xandeflix_auth_role') === 'admin' ||
+    localStorage.getItem('xandeflix_admin_mode') === 'true',
   managedUsers: [],
   hiddenCategoryIds: JSON.parse(localStorage.getItem('xandeflix_hidden_categories') || '[]'),
   playbackProgress: JSON.parse(localStorage.getItem('xandeflix_playback_progress') || '{}'),

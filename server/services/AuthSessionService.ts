@@ -12,53 +12,79 @@ export interface AuthSession {
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
-export class AuthSessionService {
-  private static sessions = new Map<string, AuthSession>();
-  private static ttlMs = Number(process.env.SESSION_TTL_MS || DEFAULT_TTL_MS);
+interface SessionPayload {
+  role: SessionRole;
+  userId?: string;
+  createdAt: number;
+  expiresAt: number;
+}
 
-  private static cleanupExpiredSessions() {
-    const now = Date.now();
-    for (const [token, session] of this.sessions.entries()) {
-      if (session.expiresAt <= now) {
-        this.sessions.delete(token);
-      }
-    }
+export class AuthSessionService {
+  private static ttlMs = Number(process.env.SESSION_TTL_MS || DEFAULT_TTL_MS);
+  private static secret = process.env.SESSION_SECRET || process.env.ADMIN_SECRET_KEY || 'xandeflix-local-session-secret';
+
+  private static toBase64Url(value: string): string {
+    return Buffer.from(value, 'utf-8').toString('base64url');
+  }
+
+  private static fromBase64Url<T>(value: string): T {
+    return JSON.parse(Buffer.from(value, 'base64url').toString('utf-8')) as T;
+  }
+
+  private static sign(payload: string): string {
+    return crypto.createHmac('sha256', this.secret).update(payload).digest('base64url');
   }
 
   public static issueSession(role: SessionRole, userId?: string): string {
-    this.cleanupExpiredSessions();
-
-    const token = crypto.randomBytes(32).toString('hex');
     const now = Date.now();
-
-    this.sessions.set(token, {
-      token,
+    const payload: SessionPayload = {
       role,
       userId,
       createdAt: now,
       expiresAt: now + this.ttlMs,
-    });
-
-    return token;
+    };
+    const encodedPayload = this.toBase64Url(JSON.stringify(payload));
+    const signature = this.sign(encodedPayload);
+    return `${encodedPayload}.${signature}`;
   }
 
   public static getSession(token?: string | null): AuthSession | null {
     if (!token) return null;
-
-    this.cleanupExpiredSessions();
-    const session = this.sessions.get(token);
-    if (!session) return null;
-
-    if (session.expiresAt <= Date.now()) {
-      this.sessions.delete(token);
+    const [encodedPayload, signature] = token.split('.');
+    if (!encodedPayload || !signature) {
       return null;
     }
 
-    return session;
+    const expectedSignature = this.sign(encodedPayload);
+    const receivedSignature = Buffer.from(signature, 'utf-8');
+    const calculatedSignature = Buffer.from(expectedSignature, 'utf-8');
+
+    if (
+      receivedSignature.length !== calculatedSignature.length ||
+      !crypto.timingSafeEqual(receivedSignature, calculatedSignature)
+    ) {
+      return null;
+    }
+
+    try {
+      const payload = this.fromBase64Url<SessionPayload>(encodedPayload);
+      if (payload.expiresAt <= Date.now()) {
+        return null;
+      }
+
+      return {
+        token,
+        role: payload.role,
+        userId: payload.userId,
+        createdAt: payload.createdAt,
+        expiresAt: payload.expiresAt,
+      };
+    } catch {
+      return null;
+    }
   }
 
   public static revokeSession(token?: string | null): void {
-    if (!token) return;
-    this.sessions.delete(token);
+    void token;
   }
 }

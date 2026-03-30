@@ -13,7 +13,13 @@ export const usePlaylist = () => {
     if (!hasData) setLoading(true);
     
     const authToken = localStorage.getItem('xandeflix_auth_token') || '';
+    const authRole = localStorage.getItem('xandeflix_auth_role') || '';
     let playlistUrl = localStorage.getItem('xandeflix_playlist_url') || '';
+
+    if (authRole === 'admin') {
+      setLoading(false);
+      return;
+    }
 
     try {
       // 1. Refresh user info to get the latest playlist URL

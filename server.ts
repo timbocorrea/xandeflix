@@ -76,6 +76,24 @@ function isAllowedPlaylistUrl(targetUrl: string): boolean {
   }
 }
 
+function serializeUser(user: {
+  id: string;
+  name: string;
+  username: string;
+  playlistUrl: string;
+  isBlocked: boolean;
+  lastAccess?: string;
+}) {
+  return {
+    id: user.id,
+    name: user.name,
+    username: user.username,
+    playlistUrl: user.playlistUrl,
+    isBlocked: user.isBlocked,
+    lastAccess: user.lastAccess,
+  };
+}
+
 
 // Seed whitelist from environment
 if (process.env.PLAYLIST_URL) {
@@ -125,10 +143,12 @@ app.get('/api/playlist', async (req, res) => {
   let playlistUrl = '';
 
   if (session?.role === 'user' && session.userId) {
-    const users = await AdminService.listUsers();
-    const user = users.find(u => u.id === session.userId && !u.isBlocked);
+    const user = await AdminService.getUserById(session.userId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+    if (user.isBlocked) {
+      return res.status(401).json({ error: 'User blocked' });
     }
 
     playlistUrl = user.playlistUrl || '';
@@ -303,14 +323,7 @@ app.post('/api/auth/login', async (req, res) => {
         ...result,
         sessionToken,
         data: result.data
-          ? {
-              id: result.data.id,
-              name: result.data.name,
-              username: result.data.username,
-              playlistUrl: result.data.playlistUrl,
-              isBlocked: result.data.isBlocked,
-              lastAccess: result.data.lastAccess,
-            }
+          ? serializeUser(result.data)
           : undefined,
       };
 
@@ -331,22 +344,49 @@ app.get('/api/auth/me', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const users = await AdminService.listUsers();
-    const user = users.find(u => u.id === session.userId && !u.isBlocked);
-    if (user) {
-      if (user.playlistUrl) {
-        registerAuthorizedDomainFromUrl(user.playlistUrl);
-      }
-      res.json({
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        playlistUrl: user.playlistUrl,
-        isBlocked: user.isBlocked,
-        lastAccess: user.lastAccess,
-      });
+    const user = await AdminService.getUserById(session.userId);
+    if (!user || user.isBlocked) {
+      return res.status(401).json({ error: 'Unauthorized' });
     }
-    else res.status(404).send('User not found');
+
+    if (user.playlistUrl) {
+      registerAuthorizedDomainFromUrl(user.playlistUrl);
+    }
+
+    res.json(serializeUser(user));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/auth/session', async (req, res) => {
+  try {
+    const session = AuthSessionService.getSession(getRequestAuthToken(req));
+    if (!session) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (session.role === 'admin') {
+      return res.json({ role: 'admin' });
+    }
+
+    if (!session.userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const user = await AdminService.getUserById(session.userId);
+    if (!user || user.isBlocked) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (user.playlistUrl) {
+      registerAuthorizedDomainFromUrl(user.playlistUrl);
+    }
+
+    res.json({
+      role: 'user',
+      data: serializeUser(user),
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
