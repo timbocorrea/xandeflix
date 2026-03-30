@@ -274,7 +274,9 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         )}
       </AnimatePresence>
 
-      <SideMenu onSelect={handleMenuSelect} activeId={activeFilter} onLogout={onLogout} />
+      {(!activeVideoUrl || isPlayerMinimized) && (
+        <SideMenu onSelect={handleMenuSelect} activeId={activeFilter} onLogout={onLogout} />
+      )}
       
       <ScrollView 
         ref={scrollRef}
