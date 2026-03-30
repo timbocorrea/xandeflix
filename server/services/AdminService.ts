@@ -187,6 +187,96 @@ export class AdminService {
 
     this.loadUsers();
     this.initialized = true;
+
+    // Fire-and-forget sync: push local-only users to Supabase
+    this.syncLocalUsersToSupabase().catch((err) => {
+      console.warn('[ADMIN] Background sync to Supabase failed:', err);
+    });
+  }
+
+  /**
+   * Syncs local-only users (those with non-UUID IDs like usr_xxx) to Supabase.
+   * - If the user already exists in Supabase (by username), updates the local ID to match.
+   * - If the user doesn't exist in Supabase, creates them there.
+   */
+  private static async syncLocalUsersToSupabase(): Promise<void> {
+    if (!supabase) {
+      console.log('[SYNC] Supabase not available, skipping sync.');
+      return;
+    }
+
+    const localOnlyUsers = this.users.filter((u) => !this.isUuid(u.id));
+    if (localOnlyUsers.length === 0) {
+      console.log('[SYNC] No local-only users to sync.');
+      return;
+    }
+
+    console.log(`[SYNC] Found ${localOnlyUsers.length} local-only user(s). Syncing to Supabase...`);
+
+    for (const localUser of localOnlyUsers) {
+      try {
+        // Check if user already exists in Supabase by username
+        const { data: existing, error: findError } = await supabase
+          .from('xandeflix_users')
+          .select('*')
+          .ilike('username', this.normalizeIdentifier(localUser.username))
+          .maybeSingle();
+
+        if (findError) {
+          console.warn(`[SYNC] Error checking user "${localUser.username}":`, findError.message);
+          continue;
+        }
+
+        if (existing) {
+          // User exists in Supabase — update local record with Supabase UUID
+          const oldId = localUser.id;
+          const mapped = this.mapSupabaseUser(existing as SupabaseUserRow);
+          
+          // Update the playlist URL in Supabase if the local one is newer/different
+          if (localUser.playlistUrl && localUser.playlistUrl !== mapped.playlistUrl) {
+            await supabase
+              .from('xandeflix_users')
+              .update({ playlist_url: localUser.playlistUrl })
+              .eq('id', existing.id);
+            console.log(`[SYNC] Updated playlist URL in Supabase for "${localUser.username}".`);
+          }
+
+          localUser.id = existing.id;
+          console.log(`[SYNC] Linked local user "${localUser.username}" (${oldId}) → Supabase (${existing.id})`);
+        } else {
+          // User doesn't exist in Supabase — insert
+          const { data: inserted, error: insertError } = await supabase
+            .from('xandeflix_users')
+            .insert({
+              name: localUser.name,
+              username: localUser.username,
+              password: localUser.password || '123',
+              playlist_url: localUser.playlistUrl,
+              is_blocked: localUser.isBlocked,
+              role: localUser.role || 'user',
+            })
+            .select('*')
+            .maybeSingle();
+
+          if (insertError) {
+            console.warn(`[SYNC] Error inserting user "${localUser.username}":`, insertError.message);
+            continue;
+          }
+
+          if (inserted) {
+            const oldId = localUser.id;
+            localUser.id = inserted.id;
+            console.log(`[SYNC] Created user "${localUser.username}" in Supabase (${oldId} → ${inserted.id})`);
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[SYNC] Unexpected error syncing user "${localUser.username}":`, err.message);
+      }
+    }
+
+    // Save updated local file with new Supabase UUIDs
+    this.saveUsers();
+    console.log('[SYNC] Local users.json updated with Supabase UUIDs.');
   }
 
   public static async listUsers(): Promise<UserRecord[]> {
