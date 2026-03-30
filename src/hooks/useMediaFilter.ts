@@ -10,7 +10,11 @@ export const useMediaFilter = () => {
     let result = allCategories.filter(cat => !hiddenCategoryIds.includes(cat.id));
 
     // 2. Filter by type (home, live, movies, series)
-    if (activeFilter !== 'home') {
+    if (activeFilter === 'home') {
+      // Show everything EXCEPT live channels on the initial dashboard
+      result = result.filter(cat => cat.type !== 'live');
+    } else if (activeFilter !== 'search') {
+      // Filter strictly by the active type (live, movie, or series)
       result = result.filter(cat => cat.type === activeFilter);
     }
 

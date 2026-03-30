@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableHighlight } from 'react-native';
 import { motion } from 'motion/react';
-import { Search, Home, Film, Tv, Plus, Settings, User, Radio, LogOut, Shield } from 'lucide-react';
+import { Search, Home, Film, Tv, Settings, User, Radio, LogOut } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -21,10 +21,7 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'live', label: 'Canais ao Vivo', icon: Radio },
   { id: 'movie', label: 'Filmes', icon: Film },
   { id: 'series', label: 'Séries', icon: Tv },
-  { id: 'all', label: 'Geral', icon: Plus },
-  { id: 'mylist', label: 'Minha Lista', icon: Plus },
   { id: 'settings', label: 'Ajustes', icon: Settings },
-  { id: 'admin', label: 'Administração', icon: Shield },
 ];
 
 interface SideMenuProps {
