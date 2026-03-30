@@ -448,7 +448,12 @@ app.get('/api/admin/users', adminAuthMiddleware, async (req, res) => {
     const users = await AdminService.listUsers();
     res.json(users);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] Erro detalhado ao listar usuários no Admin:', e);
+    res.status(500).json({ 
+      error: e.message || 'Erro interno no servidor (Provável falha de conexão com o Banco)',
+      details: e.details || null,
+      hint: 'Verifique se as variáveis VITE_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY estão configuradas na Vercel.'
+    });
   }
 });
 

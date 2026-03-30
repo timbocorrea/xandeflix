@@ -38,16 +38,19 @@ CREATE TABLE IF NOT EXISTS public.playback_progress (
 ALTER TABLE public.xandeflix_users ENABLE ROW LEVEL SECURITY;
 
 -- Política: Usuários só veem seus próprios dados de perfil
+DROP POLICY IF EXISTS "User Profile Access" ON public.xandeflix_users;
 CREATE POLICY "User Profile Access" ON public.xandeflix_users 
 FOR SELECT 
 USING (auth.uid() = id);
 
 -- Política: Administradores têm acesso total (exemplo opcional)
+-- DROP POLICY IF EXISTS "Admin Full Access" ON public.xandeflix_users;
 -- CREATE POLICY "Admin Full Access" ON public.xandeflix_users FOR ALL USING (role = 'admin');
 
 ALTER TABLE public.playback_progress ENABLE ROW LEVEL SECURITY;
 
 -- Política: Usuários só gerenciam seu próprio progresso de vídeo
+DROP POLICY IF EXISTS "User Progress Ownership" ON public.playback_progress;
 CREATE POLICY "User Progress Ownership" ON public.playback_progress 
 FOR ALL 
 USING (auth.uid() = user_id)
