@@ -101,12 +101,12 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   useEffect(() => {
     if (allCategories.length === 0) return;
     
-    // Filter source categories based on the current context
-    let sourceCats = allCategories;
+    // Exclude live channels from hero slideshow across all views
+    let sourceCats = allCategories.filter(cat => cat.type !== 'live');
     
-    // For specific tabs, only show content of that type in the slides
+    // For specific tabs, further filter by the active type
     if (activeFilter !== 'home' && activeFilter !== 'all' && activeFilter !== 'search' && activeFilter !== 'mylist') {
-      sourceCats = allCategories.filter(cat => cat.type === activeFilter);
+      sourceCats = sourceCats.filter(cat => cat.type === activeFilter);
     }
     
     // Pick 1-2 items from each source category, preferring those with unique thumbnails
