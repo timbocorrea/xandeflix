@@ -32,12 +32,18 @@ export class M3UParserService {
       'ep ', 'ep.', 'animes', 'desenhos', 'kids series', 'netflix series', 'hbo series'
     ];
 
-    const isSeriesPattern = /S\d{1,2}E\d{1,2}/i.test(name) || /T\d{1,2}E\d{1,2}/i.test(name);
-
-    if (isSeriesPattern || seriesKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
+    // If it's a TV series pattern, it's a series - highest confidence for VOD
+    const isSeriesPattern = /S\d{1,2}[\s.]?E\d{1,2}/i.test(name) || /T\d{1,2}[\s.]?E\d{1,2}/i.test(name);
+    
+    if (isSeriesPattern) {
       type = MediaType.SERIES;
-    } else if (movieKeywords.some(kw => catLower.includes(kw) || nameLower.includes(kw))) {
-      type = MediaType.MOVIE;
+    } else {
+      // Lower confidence checks - will be refined by URL later
+      const isSeriesCategory = seriesKeywords.some(kw => catLower.includes(kw));
+      const isMovieCategory = movieKeywords.some(kw => catLower.includes(kw));
+      
+      if (isSeriesCategory) type = MediaType.SERIES;
+      else if (isMovieCategory) type = MediaType.MOVIE;
     }
 
     let thumbnail = logoMatch ? logoMatch[1] : `https://picsum.photos/seed/${encodeURIComponent(name)}/400/225`;
@@ -120,6 +126,29 @@ export class M3UParserService {
 
         const streamUrl = line;
         onParsedUrl(streamUrl);
+
+        // --- Refine media type based on URL (Highest Confidence) ---
+        if (currentItem) {
+          const urlLower = streamUrl.toLowerCase();
+          
+          // Xtream Codes patterns
+          if (urlLower.includes('/live/')) {
+            currentItem.type = MediaType.LIVE;
+          } else if (urlLower.includes('/movie/')) {
+            currentItem.type = MediaType.MOVIE;
+          } else if (urlLower.includes('/series/')) {
+            currentItem.type = MediaType.SERIES;
+          } 
+          // Extension/Format patterns
+          else if (urlLower.includes('output=mpegts') || urlLower.includes('output=ts')) {
+            currentItem.type = MediaType.LIVE;
+          } else if (urlLower.match(/\.(mp4|mkv|avi|mov)$/i)) {
+            // If it's a file extension and wasn't explicitly live, it's likely VOD
+            if (currentItem.type === MediaType.LIVE) {
+               currentItem.type = MediaType.MOVIE; // Default VOD to movie if not sure
+            }
+          }
+        }
 
         (currentItem as Media).videoUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}`;
         items.push(currentItem as Media);
@@ -295,6 +324,17 @@ export class M3UParserService {
       }
     });
 
-    return Object.values(categoriesMap).slice(0, 300);
+    // Convert map to array and sort categories by content type priority
+    const sortedCategories = Object.values(categoriesMap).sort((a, b) => {
+      const typePriority = { [MediaType.LIVE]: 0, [MediaType.MOVIE]: 1, [MediaType.SERIES]: 2 };
+      const priorityA = typePriority[a.type as keyof typeof typePriority] ?? 5;
+      const priorityB = typePriority[b.type as keyof typeof typePriority] ?? 5;
+      
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      // Secondary sort alphabetically by title
+      return a.title.localeCompare(b.title);
+    });
+
+    return sortedCategories.slice(0, 300);
   }
 }

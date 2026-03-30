@@ -92,6 +92,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               value={identifier}
               onChangeText={(text) => { setIdentifier(text); setError(null); }}
               autoCapitalize="none"
+              onSubmitEditing={handleLogin}
               // @ts-ignore
               autoComplete="username"
             />
@@ -115,6 +116,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     value={password}
                     onChangeText={setPassword}
                     secureTextEntry
+                    onSubmitEditing={handleLogin}
                     // @ts-ignore
                     autoComplete="current-password"
                   />

@@ -19,6 +19,7 @@ import { HeroSection } from '../components/HeroSection';
 import { CategoryRow } from '../components/CategoryRow';
 import LoadingScreen from '../components/LoadingScreen';
 import { MediaDetailsPage } from '../components/MediaDetailsModal';
+import { CategoryGridView } from '../components/CategoryGridView';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -51,6 +52,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [isPlayerMinimized, setIsPlayerMinimized] = useState(false);
   const [detailsMedia, setDetailsMedia] = useState<Media | null>(null);
   const [isDetailsVisible, setIsDetailsVisible] = useState(false);
+  const [gridCategory, setGridCategory] = useState<Category | null>(null);
   
   const scrollRef = useRef<ScrollView>(null);
   
@@ -200,6 +202,10 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setHiddenCategoryIds(newHiddenIds);
   }, [setHiddenCategoryIds]);
 
+  const handleSeeAll = useCallback((category: Category) => {
+    setGridCategory(category);
+  }, []);
+
   const nextEpisode = useMemo(() => {
     if (!playingMedia || playingMedia.type !== 'series' || !playingMedia.seasons?.length || !playingMedia.currentEpisode) {
       return null;
@@ -301,6 +307,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 focusedId={focusedId}
                 onMediaFocus={handleMediaFocus}
                 onMediaPress={handleMediaPress}
+                onSeeAll={handleSeeAll}
               />
             ))
           )}
@@ -413,6 +420,19 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             }}
             isMinimized={isPlayerMinimized}
             onToggleMinimize={handleToggleMinimize}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {gridCategory && (
+          <CategoryGridView 
+            category={gridCategory}
+            onClose={() => setGridCategory(null)}
+            onSelectMedia={(media) => {
+              setGridCategory(null);
+              handleMediaPress(media);
+            }}
           />
         )}
       </AnimatePresence>
@@ -534,6 +554,7 @@ const styles = StyleSheet.create({
   categoriesContainer: {
     marginTop: 36,
     zIndex: 20,
+    overflow: 'visible',
   },
   emptyContainer: {
     padding: 100, 

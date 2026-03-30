@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableHighlight, Image, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableHighlight, Image, FlatList, Pressable } from 'react-native';
 import { Category, Media } from '../types';
 import { useTMDB } from '../hooks/useTMDB';
 import { useStore } from '../store/useStore';
+import { ChevronLeft, ChevronRight, LayoutGrid } from 'lucide-react';
 
 interface MediaItemProps {
   item: Media;
@@ -39,7 +40,7 @@ const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPre
         isFocused && styles.cardFocused
       ]}
       // @ts-ignore
-      className="cursor-pointer"
+      className={`media-card-transition ${isFocused ? 'cardFocused' : 'cardContainer'}`}
     >
       <View style={styles.cardInner}>
         <Image 
@@ -77,6 +78,7 @@ interface CategoryRowProps {
   focusedId: string | null;
   onMediaFocus: (media: Media, id: string) => void;
   onMediaPress: (media: Media) => void;
+  onSeeAll: (category: Category) => void;
 }
 
 export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({ 
@@ -84,32 +86,124 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
   rowIndex, 
   focusedId, 
   onMediaFocus, 
-  onMediaPress 
+  onMediaPress,
+  onSeeAll
 }) => {
+  const flatListRef = React.useRef<FlatList>(null);
+  const [isHovered, setIsHovered] = React.useState(false);
+  const [scrollX, setScrollX] = React.useState(0);
+
+  const handleScroll = (direction: 'left' | 'right') => {
+    if (!flatListRef.current) return;
+    const scrollAmount = 800; // Scroll by roughly 4 cards
+    const newScrollX = direction === 'left' ? Math.max(0, scrollX - scrollAmount) : scrollX + scrollAmount;
+    
+    flatListRef.current.scrollToOffset({
+      offset: newScrollX,
+      animated: true
+    });
+    setScrollX(newScrollX);
+  };
+
+  React.useEffect(() => {
+    if (focusedId && focusedId.startsWith(`item-${rowIndex}-`)) {
+      const index = parseInt(focusedId.split('-')[2]);
+      if (!isNaN(index) && flatListRef.current) {
+        flatListRef.current.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.5 // Centers the item
+        });
+      }
+    }
+  }, [focusedId, rowIndex]);
+
   return (
-    <View style={styles.categoryRow}>
+    <View 
+      style={styles.categoryRow}
+      // @ts-ignore - web only
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       <Text style={styles.categoryTitle}>{category.title}</Text>
-      <FlatList
-        horizontal
-        data={category.items}
-        renderItem={({ item, index }) => (
-          <MediaItem 
-            item={item} 
-            rowIndex={rowIndex} 
-            index={index} 
-            isFocused={focusedId === `item-${rowIndex}-${index}`}
-            onFocus={onMediaFocus}
-            onPress={onMediaPress}
-          />
+      
+      <View 
+        style={styles.listWrapper}
+        // @ts-ignore
+        className="smooth-scroll-container"
+      >
+        <FlatList
+          ref={flatListRef}
+          horizontal
+          data={category.items.slice(0, 20)}
+          renderItem={({ item, index }) => (
+            <MediaItem 
+              item={item} 
+              rowIndex={rowIndex} 
+              index={index} 
+              isFocused={focusedId === `item-${rowIndex}-${index}`}
+              onFocus={onMediaFocus}
+              onPress={onMediaPress}
+            />
+          )}
+          ListFooterComponent={() => 
+            category.items.length > 20 ? (
+              <TouchableHighlight
+                onFocus={() => onMediaFocus(category.items[0], `see-all-${rowIndex}`)}
+                onPress={() => onSeeAll(category)}
+                underlayColor="transparent"
+                style={[
+                  styles.seeAllCard,
+                  focusedId === `see-all-${rowIndex}` && styles.cardFocused
+                ]}
+                className="media-card-transition"
+              >
+                <View style={styles.seeAllInner}>
+                   <LayoutGrid size={48} color="white" opacity={0.5} />
+                   <Text style={styles.seeAllText}>VER TODOS</Text>
+                   <Text style={styles.seeAllCount}>{category.items.length} itens</Text>
+                </View>
+              </TouchableHighlight>
+            ) : null
+          }
+          keyExtractor={(item, idx) => `cat-${category.id}-item-${item.id}-${idx}`}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.flatListContent}
+          removeClippedSubviews={true}
+          initialNumToRender={6}
+          maxToRenderPerBatch={6}
+          windowSize={3}
+          onScrollToIndexFailed={(info) => {
+            flatListRef.current?.scrollToOffset({
+              offset: info.averageItemLength * info.index,
+              animated: true
+            });
+          }}
+          onScroll={(e) => setScrollX(e.nativeEvent.contentOffset.x)}
+          scrollEventThrottle={16}
+          // @ts-ignore
+          className="carousel-flatlist"
+        />
+
+        {/* Carousel Navigation Arrows (Web only) */}
+        {isHovered && scrollX > 10 && (
+          <Pressable 
+            style={[styles.navButton, styles.leftButton]}
+            onPress={() => handleScroll('left')}
+          >
+            <ChevronLeft color="white" size={40} />
+          </Pressable>
         )}
-        keyExtractor={(item, idx) => `cat-${category.id}-item-${item.id}-${idx}`}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.flatListContent}
-        removeClippedSubviews={true}
-        initialNumToRender={6}
-        maxToRenderPerBatch={6}
-        windowSize={3}
-      />
+
+        {isHovered && category.items.length > 5 && (
+          <Pressable 
+            style={[styles.navButton, styles.rightButton]}
+            onPress={() => handleScroll('right')}
+          >
+            <ChevronRight color="white" size={40} />
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 });
@@ -187,6 +281,63 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '900',
+    fontFamily: 'Outfit',
+  },
+  listWrapper: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  navButton: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 60,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+    // @ts-ignore
+    transition: 'all 0.2s ease-in-out',
+    cursor: 'pointer',
+  } as any,
+  leftButton: {
+    left: -20,
+    borderTopRightRadius: 12,
+    borderBottomRightRadius: 12,
+  },
+  rightButton: {
+    right: 0,
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+  },
+  seeAllCard: {
+    width: 220,
+    height: 330,
+    marginRight: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+  } as any,
+  seeAllInner: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  seeAllText: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: '900',
+    fontFamily: 'Outfit',
+    letterSpacing: 1,
+  },
+  seeAllCount: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 14,
+    fontWeight: '700',
     fontFamily: 'Outfit',
   },
 });

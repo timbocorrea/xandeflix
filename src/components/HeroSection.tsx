@@ -205,9 +205,9 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
 
 const styles = StyleSheet.create({
   container: {
-    height: SCREEN_HEIGHT * 0.82,
+    height: SCREEN_HEIGHT * 0.95,
     justifyContent: 'flex-end',
-    paddingBottom: 120,
+    paddingBottom: 140,
   },
   heroBackground: {
     position: 'absolute',

@@ -95,6 +95,31 @@ html, body {
   background: rgba(229, 9, 20, 0.5);
 }
 
+/* Force smooth scrolling for ALL carousel containers and components */
+div[class*="carousel-flatlist"], 
+.carousel-flatlist,
+.smooth-scroll-container div,
+div[style*="overflow-x: scroll"] {
+  scroll-behavior: smooth !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+.smooth-scroll-container {
+  overflow: visible !important;
+}
+
+/* Card scaling and displacement transition */
+div[class*="cardContainer"], 
+.media-card-transition {
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1) !important;
+}
+
+div[class*="cardFocused"] {
+  transform: scale(1.08) translateY(-10px) !important;
+  z-index: 50 !important;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.8), 0 0 20px rgba(229,9,20,0.4) !important;
+}
+
 :focus {
   outline: none;
 }
