@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, StyleSheet, ScrollView, Animated, Dimensions, TouchableHighlight, Text } from 'react-native';
-import { RotateCcw } from 'lucide-react';
+import { View, StyleSheet, ScrollView, Animated, Dimensions, TouchableHighlight, Text, TextInput } from 'react-native';
+import { RotateCcw, Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Common types & Stores
@@ -28,6 +28,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const { 
     allCategories, 
     activeFilter, 
+    searchQuery,
     selectedMedia, 
     setSelectedMedia, 
     isSettingsVisible, 
@@ -37,6 +38,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     isUsingMock 
   } = useStore();
   const setActiveFilter = useStore((state) => state.setActiveFilter);
+  const setSearchQuery = useStore((state) => state.setSearchQuery);
   const setIsAdminMode = useStore((state) => state.setIsAdminMode);
 
   // Custom Hooks for Data & Filtering
@@ -55,11 +57,24 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [gridCategory, setGridCategory] = useState<Category | null>(null);
   
   const scrollRef = useRef<ScrollView>(null);
+  const searchInputRef = useRef<any>(null);
   
   // Initial Data Fetch
   useEffect(() => {
     fetchPlaylist();
   }, [fetchPlaylist]);
+
+  useEffect(() => {
+    if (activeFilter !== 'search') {
+      return;
+    }
+
+    const focusTimer = setTimeout(() => {
+      searchInputRef.current?.focus?.();
+    }, 50);
+
+    return () => clearTimeout(focusTimer);
+  }, [activeFilter]);
 
   // Handle play action
   const handlePlay = useCallback(async (media: Media) => {
@@ -194,9 +209,19 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       setIsAdminMode(true);
       return;
     }
+
+    if (filter === 'settings' || filter === 'profile') {
+      setIsSettingsVisible(true);
+      return;
+    }
+
+    if (filter !== 'search') {
+      setSearchQuery('');
+    }
+
     setActiveFilter(filter);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
-  }, [setActiveFilter, setIsAdminMode]);
+  }, [setActiveFilter, setIsAdminMode, setIsSettingsVisible, setSearchQuery]);
 
   const handleSaveSettings = useCallback((url: string, newHiddenIds: string[]) => {
     setHiddenCategoryIds(newHiddenIds);
@@ -243,6 +268,14 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     };
   }, [playingMedia]);
 
+  const searchResultsCount = useMemo(
+    () => filteredCategories.reduce((total, category) => total + category.items.length, 0),
+    [filteredCategories]
+  );
+
+  const isSearchMode = activeFilter === 'search';
+  const isSearchIdle = isSearchMode && !searchQuery.trim();
+
   return (
     <View style={styles.container}>
       {/* Loading State Overlay */}
@@ -275,7 +308,11 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       </AnimatePresence>
 
       {(!activeVideoUrl || isPlayerMinimized) && (
-        <SideMenu onSelect={handleMenuSelect} activeId={activeFilter} onLogout={onLogout} />
+        <SideMenu
+          onSelect={handleMenuSelect}
+          activeId={isSettingsVisible ? 'settings' : activeFilter}
+          onLogout={onLogout}
+        />
       )}
       
       <ScrollView 
@@ -284,19 +321,37 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Cinematic Hero */}
-        <HeroSection 
-          media={selectedMedia}
-          onPlay={handleMediaPress}
-          isAutoRotating={isAutoRotating}
-          onAutoRotate={() => setIsAutoRotating(true)}
-          focusedId={focusedId}
-          onFocus={handleInteractiveFocus}
-        />
+        {!isSearchMode ? (
+          <HeroSection 
+            media={selectedMedia}
+            onPlay={handleMediaPress}
+            isAutoRotating={isAutoRotating}
+            onAutoRotate={() => setIsAutoRotating(true)}
+            focusedId={focusedId}
+            onFocus={handleInteractiveFocus}
+          />
+        ) : (
+          <View style={styles.searchIntro}>
+            <Text style={styles.searchIntroTitle}>Busca Global</Text>
+            <Text style={styles.searchIntroSubtitle}>
+              {isSearchIdle
+                ? 'Digite no campo de busca para encontrar filmes, series e canais.'
+                : `${searchResultsCount} resultado${searchResultsCount === 1 ? '' : 's'} encontrado${searchResultsCount === 1 ? '' : 's'} para "${searchQuery}".`}
+            </Text>
+          </View>
+        )}
 
         {/* Dynamic Media Rows */}
-        <View style={styles.categoriesContainer}>
-          {filteredCategories.length === 0 ? (
+        <View style={[styles.categoriesContainer, isSearchMode && styles.searchCategoriesContainer]}>
+          {isSearchIdle ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>Digite algo para comecar a busca.</Text>
+            </View>
+          ) : isSearchMode && filteredCategories.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>Nenhum resultado encontrado para sua busca.</Text>
+            </View>
+          ) : filteredCategories.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyText}>Nenhum conteúdo encontrado nesta categoria.</Text>
             </View>
@@ -319,7 +374,36 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       {/* Header Branding - Overlays the ScrollView */}
       <View style={styles.header}>
         <Text style={styles.logo}>XANDEFLIX</Text>
-        
+
+        <View style={styles.headerRight}>
+          {isSearchMode && (
+            <View style={styles.searchBar}>
+              <View style={styles.searchIconWrap}>
+                <Search size={18} color="rgba(255,255,255,0.45)" />
+              </View>
+              <TextInput
+                ref={searchInputRef}
+                style={styles.searchInput}
+                placeholder="Buscar filmes, series e canais..."
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+              {searchQuery ? (
+                <TouchableHighlight
+                  onPress={() => setSearchQuery('')}
+                  underlayColor="rgba(255,255,255,0.08)"
+                  style={styles.clearSearchButton}
+                >
+                  <View style={styles.clearSearchButtonInner}>
+                    <X size={16} color="rgba(255,255,255,0.8)" />
+                  </View>
+                </TouchableHighlight>
+              ) : null}
+            </View>
+          )}
+
         {/* Playlist Status Feedback */}
         {(isUsingMock || playlistError) && (
           <View style={styles.mockControls}>
@@ -387,6 +471,8 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             ) : null}
           </View>
         )}
+
+        </View>
       </View>
 
       {/* Overlays */}
@@ -475,11 +561,16 @@ const styles = StyleSheet.create({
     paddingTop: 40,
     paddingLeft: 120, // Align with side menu icons
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     zIndex: 100,
     backgroundColor: 'transparent',
   } as any,
+  headerRight: {
+    alignItems: 'flex-end',
+    gap: 12,
+    paddingRight: 40,
+  },
   logo: {
     fontSize: 56,
     fontWeight: '900',
@@ -553,10 +644,65 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontFamily: 'Outfit',
   },
+  searchBar: {
+    width: 440,
+    height: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(7,7,7,0.9)',
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 10,
+  },
+  searchIconWrap: {
+    width: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchInput: {
+    flex: 1,
+    height: '100%',
+    color: 'white',
+    fontSize: 16,
+    fontFamily: 'Outfit',
+    paddingHorizontal: 8,
+  },
+  clearSearchButton: {
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  clearSearchButtonInner: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchIntro: {
+    marginTop: 154,
+    paddingBottom: 20,
+  },
+  searchIntroTitle: {
+    color: 'white',
+    fontSize: 34,
+    fontWeight: '900',
+    fontFamily: 'Outfit',
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
+  },
+  searchIntroSubtitle: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 15,
+    marginTop: 10,
+    fontFamily: 'Outfit',
+  },
   categoriesContainer: {
     marginTop: 36,
     zIndex: 20,
     overflow: 'visible',
+  },
+  searchCategoriesContainer: {
+    marginTop: 12,
   },
   emptyContainer: {
     padding: 100, 
