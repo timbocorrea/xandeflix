@@ -2,9 +2,9 @@ import React, { useEffect, useRef } from 'react';
 import mpegts from 'mpegts.js';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
-import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings } from 'lucide-react';
+import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings, Menu, Search, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Media } from '../types';
+import { Media, Category } from '../types';
 import { useStore } from '../store/useStore';
 
 interface VideoPlayerProps {
@@ -50,12 +50,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [diagnostic, setDiagnostic] = React.useState<any>(null);
   const [diagnosing, setDiagnosing] = React.useState(false);
   
-  const hasQualities = !!(media?.type === 'live' && media?.qualities && media.qualities.length > 1);
+  // Internal Source Override (for channel switching)
+  const [internalUrl, setInternalUrl] = React.useState(url);
+  const [internalMedia, setInternalMedia] = React.useState<Media | null>(media);
+
+  // Sidebar State
+  const { allCategories } = useStore();
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+  const [selectedCategoryId, setSelectedCategoryId] = React.useState<string | null>(null);
+  const [channelSearchQuery, setChannelSearchQuery] = React.useState('');
+
+  const hasQualities = !!(internalMedia?.type === 'live' && internalMedia?.qualities && internalMedia.qualities.length > 1);
   const [activeQualityIndex, setActiveQualityIndex] = React.useState(0);
-  const streamUrl = hasQualities ? media.qualities![activeQualityIndex].url : url;
+  const streamUrl = hasQualities ? internalMedia.qualities![activeQualityIndex].url : internalUrl;
   
   const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(streamUrl));
   const authToken = localStorage.getItem('xandeflix_auth_token') || '';
+
+  // Update internal state when props change (initial load)
+  useEffect(() => {
+    setInternalUrl(url);
+    setInternalMedia(media);
+  }, [url, media]);
+
+  // Set initial category when sidebar opens or categories load
+  useEffect(() => {
+    if (allCategories.length > 0 && !selectedCategoryId) {
+      setSelectedCategoryId(allCategories[0].id);
+    }
+  }, [allCategories, selectedCategoryId]);
 
   // Auto-update strategy if the stream URL changes due to quality switch
   useEffect(() => {
@@ -147,6 +170,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       if (currentTime > 0 && duration > 0) {
         // Auto-resume from previous progress point on first load
+      if (currentTime > 0 && duration > 0) {
+        // Auto-resume from previous progress point on first load
         if (!initialSeekDone.current) {
           const allProgress = useStore.getState().playbackProgress;
           const savedProgress = allProgress[progressId];
@@ -165,6 +190,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           lastSavedTime.current = currentTime;
           setPlaybackProgress(progressId, currentTime, duration);
         }
+      }
       }
 
       if (!onPlayNextEpisode) return;
@@ -249,13 +275,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
-      if (e.key === 'Escape' || e.key === 'Backspace') onClose();
-      else if (e.key === 'ArrowRight') skipTime(10);
-      else if (e.key === 'ArrowLeft') skipTime(-10);
+      if (e.key === 'Escape') {
+        if (isSidebarOpen) setIsSidebarOpen(false);
+        else onClose();
+      }
+      else if (e.key === 'Backspace') onClose();
+      else if (e.key === 'ArrowRight' && !isSidebarOpen) skipTime(10);
+      else if (e.key === 'ArrowLeft' && !isSidebarOpen) skipTime(-10);
+      else if (e.key === 'm' || e.key === 'M') setIsSidebarOpen(!isSidebarOpen);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [streamUrl, strategy, skipTime]);
+  }, [streamUrl, strategy, skipTime, isSidebarOpen]);
 
   // ── mpegts.js for raw MPEG-TS streams ──
   function initMpegTs(video: HTMLVideoElement) {
@@ -547,6 +578,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             )}
           </button>
         )}
+
+        <button 
+          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          className={`p-3 backdrop-blur-xl border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg ${
+            isSidebarOpen ? 'bg-red-600 text-white' : 'bg-black/40 text-white hover:bg-white/10'
+          }`}
+          title="Lista de Canais"
+        >
+          <Menu className={`w-6 h-6 transition-transform duration-300 ${isSidebarOpen ? 'rotate-90' : ''}`} />
+        </button>
         <button 
           onClick={onClose}
           className="p-3 backdrop-blur-xl bg-black/40 hover:bg-red-500/20 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
@@ -623,6 +664,167 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Auto-Play Countdown Overlay */}
+      {/* Channel Sidebar Menu */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <>
+            {/* Backdrop click to close */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[150]"
+            />
+
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="absolute top-0 left-0 bottom-0 w-full max-w-[600px] bg-zinc-950/95 backdrop-blur-3xl border-r border-white/10 z-[160] flex flex-col shadow-[20px_0_50px_rgba(0,0,0,0.8)]"
+            >
+              {/* Sidebar Header */}
+              <div className="p-8 pb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-black text-white tracking-tight flex items-center gap-3">
+                    <Layout className="text-red-600 w-6 h-6" />
+                    GUIA DE CANAIS
+                  </h2>
+                  <p className="text-gray-500 text-xs mt-1 uppercase tracking-widest font-bold">Navegue pelas categorias e canais</p>
+                </div>
+                <button 
+                  onClick={() => setIsSidebarOpen(false)}
+                  className="p-3 hover:bg-white/10 rounded-full transition-colors text-gray-400 hover:text-white"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Search Bar */}
+              <div className="px-8 pb-6">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                  <input
+                    type="text"
+                    placeholder="Buscar canal, filme ou série..."
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-red-600/50 transition-colors font-medium"
+                    value={channelSearchQuery}
+                    onChange={(e) => setChannelSearchQuery(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Two Column Content */}
+              <div className="flex-1 flex overflow-hidden border-t border-white/5">
+                {/* Column 1: Categories */}
+                <div className="w-1/3 border-r border-white/5 bg-black/20 overflow-y-auto custom-scrollbar">
+                  {allCategories.map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setSelectedCategoryId(cat.id)}
+                      className={`w-full text-left px-8 py-5 transition-all relative flex items-center justify-between group ${
+                        (selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === allCategories[0]?.id))
+                          ? 'bg-red-600/10 text-white font-bold'
+                          : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="truncate pr-2">{cat.title}</span>
+                      {(selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === allCategories[0]?.id)) && (
+                        <motion.div layoutId="activeCat" className="absolute left-0 top-0 bottom-0 w-1 bg-red-600 shadow-[0_0_10px_rgba(229,9,20,0.5)]" />
+                      )}
+                      <ChevronRight className={`w-4 h-4 transition-transform ${selectedCategoryId === cat.id ? 'translate-x-0' : '-translate-x-2 opacity-0 group-hover:opacity-100'}`} />
+                    </button>
+                  ))}
+                </div>
+
+                {/* Column 2: Items */}
+                <div className="flex-1 overflow-y-auto bg-black/40 custom-scrollbar">
+                  <div className="p-2">
+                    {(() => {
+                      const activeCat = allCategories.find(c => c.id === (selectedCategoryId || allCategories[0]?.id));
+                      if (!activeCat) return null;
+
+                      const filteredItems = activeCat.items.filter(item => 
+                        item.title.toLowerCase().includes(channelSearchQuery.toLowerCase())
+                      );
+
+                      if (filteredItems.length === 0) {
+                        return (
+                          <div className="p-10 text-center text-gray-600">
+                            <Search className="w-10 h-10 mx-auto mb-4 opacity-20" />
+                            <p>Nenhum resultado encontrado</p>
+                          </div>
+                        );
+                      }
+
+                      return filteredItems.map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            setInternalUrl(item.videoUrl);
+                            setInternalMedia(item);
+                            setIsSidebarOpen(false);
+                            setActiveQualityIndex(0); // Reset quality on channel change
+                          }}
+                          className={`w-full text-left p-4 rounded-xl transition-all flex items-center gap-4 group mb-1 ${
+                            item.id === internalMedia?.id 
+                              ? 'bg-red-600 shadow-xl' 
+                              : 'hover:bg-white/10'
+                          }`}
+                        >
+                          <div className="relative w-20 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-900 border border-white/5">
+                            <img 
+                              src={item.thumbnail} 
+                              alt="" 
+                              className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-110 ${item.id === internalMedia?.id ? 'opacity-50' : ''}`}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className={`text-sm font-bold truncate ${item.id === internalMedia?.id ? 'text-white' : 'text-gray-200 group-hover:text-white'}`}>
+                              {item.title}
+                            </h4>
+                            <p className={`text-[10px] uppercase tracking-wider font-medium ${item.id === internalMedia?.id ? 'text-white/70' : 'text-gray-500'}`}>
+                              {item.type === 'live' ? '● AO VIVO' : item.type === 'movie' ? 'FILME' : 'SÉRIE'}
+                            </p>
+                          </div>
+                          {item.id === internalMedia?.id && (
+                            <div className="flex gap-0.5 items-end h-3 mb-1 pr-2">
+                              {[1,2,3].map(i => (
+                                <motion.div 
+                                  key={i}
+                                  animate={{ height: ['20%', '100%', '40%'] }}
+                                  transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.15 }}
+                                  className="w-0.5 bg-white rounded-full"
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </button>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sidebar Footer */}
+              <div className="p-6 bg-black border-t border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
+                  <span className="text-gray-500 text-[10px] font-bold uppercase tracking-widest">Sincronizado via Supabase</span>
+                </div>
+                <div className="flex items-center gap-2 text-gray-500 text-xs">
+                   <span className="bg-white/10 px-2 py-1 rounded text-[10px] font-black">M</span>
+                   <span className="font-bold opacity-50 uppercase tracking-tighter">Atalho</span>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showCountdown && nextEpisode && !isMinimized && (
           <motion.div
