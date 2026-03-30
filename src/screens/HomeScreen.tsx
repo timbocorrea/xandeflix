@@ -10,9 +10,11 @@ import { useStore } from '../store/useStore';
 // Custom Hooks
 import { usePlaylist } from '../hooks/usePlaylist';
 import { useMediaFilter } from '../hooks/useMediaFilter';
+import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 
 // Components
 import { SideMenu } from '../components/SideMenu';
+import { MobileBottomNav } from '../components/MobileBottomNav';
 import { SettingsModal } from '../components/SettingsModal';
 import { VideoPlayer } from '../components/VideoPlayer';
 import { HeroSection } from '../components/HeroSection';
@@ -44,6 +46,9 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   // Custom Hooks for Data & Filtering
   const { fetchPlaylist, loading, playlistStatus, playlistError, playlistSource } = usePlaylist();
   const { filteredCategories } = useMediaFilter();
+  const layout = useResponsiveLayout();
+  const isSearchMode = activeFilter === 'search';
+  const isSearchIdle = isSearchMode && !searchQuery.trim();
 
   // Local UI State
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -55,6 +60,9 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [detailsMedia, setDetailsMedia] = useState<Media | null>(null);
   const [isDetailsVisible, setIsDetailsVisible] = useState(false);
   const [gridCategory, setGridCategory] = useState<Category | null>(null);
+  const [isPageVisible, setIsPageVisible] = useState(
+    typeof document === 'undefined' ? true : !document.hidden
+  );
   
   const scrollRef = useRef<ScrollView>(null);
   const searchInputRef = useRef<any>(null);
@@ -63,6 +71,19 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   useEffect(() => {
     fetchPlaylist();
   }, [fetchPlaylist]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const handleVisibilityChange = () => {
+      setIsPageVisible(!document.hidden);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   useEffect(() => {
     if (activeFilter !== 'search') {
@@ -168,14 +189,23 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   // Auto-rotation with fade transition
   useEffect(() => {
-    if (!isAutoRotating || heroPool.length === 0) return;
+    if (
+      !isAutoRotating ||
+      heroPool.length === 0 ||
+      !isPageVisible ||
+      isSearchMode ||
+      isDetailsVisible ||
+      !!activeVideoUrl
+    ) {
+      return;
+    }
 
     const interval = setInterval(() => {
       setHeroIndex(prev => (prev + 1) % heroPool.length);
     }, 8000); // 8 seconds per slide (Netflix-like pacing)
 
     return () => clearInterval(interval);
-  }, [isAutoRotating, heroPool]);
+  }, [isAutoRotating, heroPool, isPageVisible, isSearchMode, isDetailsVisible, activeVideoUrl]);
 
   useEffect(() => {
     if (heroPool.length === 0) {
@@ -273,9 +303,6 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     [filteredCategories]
   );
 
-  const isSearchMode = activeFilter === 'search';
-  const isSearchIdle = isSearchMode && !searchQuery.trim();
-
   return (
     <View style={styles.container}>
       {/* Loading State Overlay */}
@@ -308,17 +335,32 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       </AnimatePresence>
 
       {(!activeVideoUrl || isPlayerMinimized) && (
-        <SideMenu
-          onSelect={handleMenuSelect}
-          activeId={isSettingsVisible ? 'settings' : activeFilter}
-          onLogout={onLogout}
-        />
+        layout.isCompact ? (
+          <MobileBottomNav
+            onSelect={handleMenuSelect}
+            activeId={isSettingsVisible ? 'settings' : activeFilter}
+          />
+        ) : (
+          <SideMenu
+            onSelect={handleMenuSelect}
+            activeId={isSettingsVisible ? 'settings' : activeFilter}
+            onLogout={onLogout}
+          />
+        )
       )}
       
       <ScrollView 
         ref={scrollRef}
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          layout.isCompact && styles.scrollContentCompact,
+          {
+            paddingLeft: layout.isDesktop ? layout.sideRailWidth : layout.horizontalPadding,
+            paddingRight: layout.horizontalPadding,
+            paddingBottom: layout.bottomNavigationHeight + (layout.isDesktop ? 100 : 28),
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {!isSearchMode ? (
@@ -331,9 +373,17 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             onFocus={handleInteractiveFocus}
           />
         ) : (
-          <View style={styles.searchIntro}>
-            <Text style={styles.searchIntroTitle}>Busca Global</Text>
-            <Text style={styles.searchIntroSubtitle}>
+          <View
+            style={[
+              styles.searchIntro,
+              layout.isCompact && styles.searchIntroCompact,
+              { marginTop: layout.isMobile ? 132 : layout.isTablet ? 146 : 154 },
+            ]}
+          >
+            <Text style={[styles.searchIntroTitle, layout.isCompact && styles.searchIntroTitleCompact]}>
+              Busca Global
+            </Text>
+            <Text style={[styles.searchIntroSubtitle, layout.isCompact && styles.searchIntroSubtitleCompact]}>
               {isSearchIdle
                 ? 'Digite no campo de busca para encontrar filmes, series e canais.'
                 : `${searchResultsCount} resultado${searchResultsCount === 1 ? '' : 's'} encontrado${searchResultsCount === 1 ? '' : 's'} para "${searchQuery}".`}
@@ -342,17 +392,27 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         )}
 
         {/* Dynamic Media Rows */}
-        <View style={[styles.categoriesContainer, isSearchMode && styles.searchCategoriesContainer]}>
+        <View
+          style={[
+            styles.categoriesContainer,
+            isSearchMode && styles.searchCategoriesContainer,
+            layout.isCompact && styles.categoriesContainerCompact,
+          ]}
+        >
           {isSearchIdle ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>Digite algo para comecar a busca.</Text>
+            <View style={[styles.emptyContainer, layout.isCompact && styles.emptyContainerCompact]}>
+              <Text style={[styles.emptyText, layout.isCompact && styles.emptyTextCompact]}>
+                Digite algo para comecar a busca.
+              </Text>
             </View>
           ) : isSearchMode && filteredCategories.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>Nenhum resultado encontrado para sua busca.</Text>
+            <View style={[styles.emptyContainer, layout.isCompact && styles.emptyContainerCompact]}>
+              <Text style={[styles.emptyText, layout.isCompact && styles.emptyTextCompact]}>
+                Nenhum resultado encontrado para sua busca.
+              </Text>
             </View>
           ) : filteredCategories.length === 0 ? (
-            <View style={styles.emptyContainer}>
+            <View style={[styles.emptyContainer, layout.isCompact && styles.emptyContainerCompact]}>
               <Text style={styles.emptyText}>Nenhum conteúdo encontrado nesta categoria.</Text>
             </View>
           ) : (
@@ -372,12 +432,31 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       </ScrollView>
 
       {/* Header Branding - Overlays the ScrollView */}
-      <View style={styles.header}>
-        <Text style={styles.logo}>XANDEFLIX</Text>
+      <View
+        style={[
+          styles.header,
+          layout.isCompact && styles.headerCompact,
+          {
+            height: layout.isCompact ? (isSearchMode ? 172 : 118) : 120,
+            paddingTop: layout.topHeaderPadding,
+            paddingLeft: layout.isDesktop ? layout.sideRailWidth : layout.horizontalPadding,
+            paddingRight: layout.horizontalPadding,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.logo,
+            layout.isCompact && styles.logoCompact,
+            { fontSize: layout.isMobile ? 30 : layout.isTablet ? 40 : 56 },
+          ]}
+        >
+          XANDEFLIX
+        </Text>
 
-        <View style={styles.headerRight}>
+        <View style={[styles.headerRight, layout.isCompact && styles.headerRightCompact]}>
           {isSearchMode && (
-            <View style={styles.searchBar}>
+            <View style={[styles.searchBar, layout.isCompact && styles.searchBarCompact]}>
               <View style={styles.searchIconWrap}>
                 <Search size={18} color="rgba(255,255,255,0.45)" />
               </View>
@@ -406,7 +485,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
         {/* Playlist Status Feedback */}
         {(isUsingMock || playlistError) && (
-          <View style={styles.mockControls}>
+          <View style={[styles.mockControls, layout.isCompact && styles.mockControlsCompact]}>
             {/* Error/Status Badge */}
             <View style={[
               styles.mockBadge, 
@@ -456,7 +535,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
         {/* Loading indicator in header */}
         {loading && !isUsingMock && (
-          <View style={styles.mockControls}>
+          <View style={[styles.mockControls, layout.isCompact && styles.mockControlsCompact]}>
             <View style={[styles.mockBadge, { backgroundColor: '#3B82F6' }]}>
               <Text style={styles.mockBadgeText}>
                 {playlistStatus === 'loading_user_info' 
@@ -552,6 +631,9 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 100,
   },
+  scrollContentCompact: {
+    paddingBottom: 28,
+  },
   header: {
     position: 'absolute',
     top: 0,
@@ -566,10 +648,22 @@ const styles = StyleSheet.create({
     zIndex: 100,
     backgroundColor: 'transparent',
   } as any,
+  headerCompact: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    gap: 14,
+  },
   headerRight: {
     alignItems: 'flex-end',
     gap: 12,
     paddingRight: 40,
+  },
+  headerRightCompact: {
+    width: '100%',
+    alignItems: 'stretch',
+    paddingRight: 0,
+    gap: 10,
   },
   logo: {
     fontSize: 56,
@@ -579,12 +673,20 @@ const styles = StyleSheet.create({
     letterSpacing: -3,
     fontFamily: 'Outfit',
   },
+  logoCompact: {
+    letterSpacing: -1.5,
+  },
   mockControls: {
     flexDirection: 'row', 
     alignItems: 'center', 
     gap: 12,
     flexWrap: 'wrap',
     paddingRight: 40,
+  },
+  mockControlsCompact: {
+    width: '100%',
+    gap: 10,
+    paddingRight: 0,
   },
   mockBadge: {
     backgroundColor: '#EAB308',
@@ -655,6 +757,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
     paddingHorizontal: 10,
   },
+  searchBarCompact: {
+    width: '100%',
+    minHeight: 50,
+  },
   searchIconWrap: {
     width: 34,
     alignItems: 'center',
@@ -682,6 +788,9 @@ const styles = StyleSheet.create({
     marginTop: 154,
     paddingBottom: 20,
   },
+  searchIntroCompact: {
+    paddingBottom: 12,
+  },
   searchIntroTitle: {
     color: 'white',
     fontSize: 34,
@@ -690,16 +799,27 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1.5,
   },
+  searchIntroTitleCompact: {
+    fontSize: 24,
+    letterSpacing: 1,
+  },
   searchIntroSubtitle: {
     color: 'rgba(255,255,255,0.55)',
     fontSize: 15,
     marginTop: 10,
     fontFamily: 'Outfit',
   },
+  searchIntroSubtitleCompact: {
+    fontSize: 14,
+    lineHeight: 21,
+  },
   categoriesContainer: {
     marginTop: 36,
     zIndex: 20,
     overflow: 'visible',
+  },
+  categoriesContainerCompact: {
+    marginTop: 20,
   },
   searchCategoriesContainer: {
     marginTop: 12,
@@ -708,11 +828,20 @@ const styles = StyleSheet.create({
     padding: 100, 
     alignItems: 'center',
   },
+  emptyContainerCompact: {
+    paddingHorizontal: 16,
+    paddingVertical: 56,
+  },
   emptyText: {
     color: 'rgba(255,255,255,0.4)', 
     fontSize: 24, 
     fontWeight: 'bold',
     fontFamily: 'Outfit',
+  },
+  emptyTextCompact: {
+    fontSize: 18,
+    textAlign: 'center',
+    lineHeight: 26,
   },
 });
 

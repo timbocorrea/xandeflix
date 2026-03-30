@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableHighlight, Image, FlatList, Pressable } from 'react-native';
 import { Category, Media } from '../types';
 import { useTMDB } from '../hooks/useTMDB';
+import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
 import { ChevronLeft, ChevronRight, LayoutGrid } from 'lucide-react';
 
@@ -10,11 +11,26 @@ interface MediaItemProps {
   rowIndex: number;
   index: number;
   isFocused: boolean;
+  cardWidth: number;
+  cardHeight: number;
+  cardGap: number;
+  isCompact: boolean;
   onFocus: (media: Media, id: string) => void;
   onPress: (media: Media) => void;
 }
 
-const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPress }: MediaItemProps) => {
+const MediaItem = React.memo(({
+  item,
+  rowIndex,
+  index,
+  isFocused,
+  cardWidth,
+  cardHeight,
+  cardGap,
+  isCompact,
+  onFocus,
+  onPress,
+}: MediaItemProps) => {
   const navId = `item-${rowIndex}-${index}`;
   const [imgError, setImgError] = React.useState(false);
   const { data: tmdbData } = useTMDB(item.title, item.type);
@@ -37,6 +53,11 @@ const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPre
       underlayColor="transparent"
       style={[
         styles.cardContainer,
+        {
+          width: cardWidth,
+          height: cardHeight,
+          marginRight: cardGap,
+        },
         isFocused && styles.cardFocused
       ]}
       // @ts-ignore
@@ -55,8 +76,10 @@ const MediaItem = React.memo(({ item, rowIndex, index, isFocused, onFocus, onPre
         
         {isFocused && (
           <View style={styles.cardOverlay}>
-            <View style={styles.overlayInner}>
-              <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+            <View style={[styles.overlayInner, isCompact && styles.overlayInnerCompact]}>
+              <Text style={[styles.cardTitle, isCompact && styles.cardTitleCompact]} numberOfLines={1}>
+                {item.title}
+              </Text>
             </View>
           </View>
         )}
@@ -92,10 +115,15 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
   const flatListRef = React.useRef<FlatList>(null);
   const [isHovered, setIsHovered] = React.useState(false);
   const [scrollX, setScrollX] = React.useState(0);
+  const layout = useResponsiveLayout();
+  const cardWidth = layout.isMobile ? 148 : layout.isTablet ? 180 : 220;
+  const cardHeight = Math.round(cardWidth * 1.5);
+  const cardGap = layout.isMobile ? 14 : layout.isTablet ? 18 : 24;
+  const scrollAmount = layout.isMobile ? cardWidth * 2.35 : layout.isTablet ? cardWidth * 2.8 : 800;
+  const showNavButtons = layout.isDesktop && isHovered;
 
   const handleScroll = (direction: 'left' | 'right') => {
     if (!flatListRef.current) return;
-    const scrollAmount = 800; // Scroll by roughly 4 cards
     const newScrollX = direction === 'left' ? Math.max(0, scrollX - scrollAmount) : scrollX + scrollAmount;
     
     flatListRef.current.scrollToOffset({
@@ -120,20 +148,25 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
 
   return (
     <View 
-      style={styles.categoryRow}
+      style={[styles.categoryRow, layout.isCompact && styles.categoryRowCompact]}
       // @ts-ignore - web only
-      onMouseEnter={() => setIsHovered(true)}
+      onMouseEnter={() => layout.isDesktop && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       <Pressable 
         onPress={() => onSeeAll(category)}
         style={({ hovered }) => [
           styles.titleContainer,
+          layout.isCompact && styles.titleContainerCompact,
           hovered && { opacity: 1, transform: 'translateX(5px)' }
         ]}
       >
-        <Text style={styles.categoryTitle}>{category.title}</Text>
-        <ChevronRight size={24} color="#E50914" style={{ marginLeft: 10, opacity: isHovered ? 1 : 0 }} />
+        <Text style={[styles.categoryTitle, layout.isCompact && styles.categoryTitleCompact]}>{category.title}</Text>
+        <ChevronRight
+          size={layout.isCompact ? 20 : 24}
+          color="#E50914"
+          style={{ marginLeft: 10, opacity: showNavButtons || layout.isCompact ? 1 : 0 }}
+        />
       </Pressable>
       
       <View 
@@ -151,6 +184,10 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
               rowIndex={rowIndex} 
               index={index} 
               isFocused={focusedId === `item-${rowIndex}-${index}`}
+              cardWidth={cardWidth}
+              cardHeight={cardHeight}
+              cardGap={cardGap}
+              isCompact={layout.isCompact}
               onFocus={onMediaFocus}
               onPress={onMediaPress}
             />
@@ -163,6 +200,11 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
                 underlayColor="transparent"
                 style={[
                   styles.seeAllCard,
+                  {
+                    width: cardWidth,
+                    height: cardHeight,
+                    marginRight: cardGap,
+                  },
                   focusedId === `see-all-${rowIndex}` && styles.cardFocused
                 ]}
                 className="media-card-transition"
@@ -177,7 +219,11 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
           }
           keyExtractor={(item, idx) => `cat-${category.id}-item-${item.id}-${idx}`}
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.flatListContent}
+          contentContainerStyle={[
+            styles.flatListContent,
+            layout.isCompact && styles.flatListContentCompact,
+            { paddingRight: layout.isCompact ? 16 : 100 },
+          ]}
           removeClippedSubviews={true}
           initialNumToRender={6}
           maxToRenderPerBatch={6}
@@ -195,7 +241,7 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
         />
 
         {/* Carousel Navigation Arrows (Web only) */}
-        {isHovered && scrollX > 10 && (
+        {showNavButtons && scrollX > 10 && (
           <Pressable 
             style={[styles.navButton, styles.leftButton]}
             onPress={() => handleScroll('left')}
@@ -204,7 +250,7 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
           </Pressable>
         )}
 
-        {isHovered && category.items.length > 5 && (
+        {showNavButtons && category.items.length > 5 && (
           <Pressable 
             style={[styles.navButton, styles.rightButton]}
             onPress={() => handleScroll('right')}
@@ -222,6 +268,10 @@ const styles = StyleSheet.create({
     marginBottom: 44,
     paddingLeft: 4,
   },
+  categoryRowCompact: {
+    marginBottom: 28,
+    paddingLeft: 0,
+  },
   categoryTitle: {
     fontSize: 28,
     fontWeight: '900',
@@ -230,6 +280,10 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     textTransform: 'uppercase',
     opacity: 0.9,
+  },
+  categoryTitleCompact: {
+    fontSize: 20,
+    letterSpacing: 1,
   },
   titleContainer: {
     flexDirection: 'row',
@@ -240,14 +294,17 @@ const styles = StyleSheet.create({
     cursor: 'pointer',
     alignSelf: 'flex-start',
   } as any,
+  titleContainerCompact: {
+    marginBottom: 16,
+  },
   flatListContent: {
     paddingRight: 100,
     paddingVertical: 20,
   },
+  flatListContentCompact: {
+    paddingVertical: 12,
+  },
   cardContainer: {
-    width: 220,
-    height: 330,
-    marginRight: 24,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#1a1a1a',
@@ -294,11 +351,18 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 10,
     borderBottomRightRadius: 10,
   },
+  overlayInnerCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+  },
   cardTitle: {
     color: 'white',
     fontSize: 16,
     fontWeight: '900',
     fontFamily: 'Outfit',
+  },
+  cardTitleCompact: {
+    fontSize: 13,
   },
   listWrapper: {
     position: 'relative',
@@ -329,9 +393,6 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 12,
   },
   seeAllCard: {
-    width: 220,
-    height: 330,
-    marginRight: 24,
     borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 2,

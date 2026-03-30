@@ -5,6 +5,7 @@ import 'video.js/dist/video-js.css';
 import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings, Menu, Search, ChevronRight, ChevronLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Media, Category } from '../types';
+import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
 
 interface VideoPlayerProps {
@@ -42,6 +43,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isMinimized = false,
   onToggleMinimize
 }) => {
+  const layout = useResponsiveLayout();
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
@@ -61,9 +63,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [channelSearchQuery, setChannelSearchQuery] = React.useState('');
   const [activeSidebarColumn, setActiveSidebarColumn] = React.useState<'categories' | 'items'>('categories');
 
-  const hasQualities = !!(internalMedia?.type === 'live' && internalMedia?.qualities && internalMedia.qualities.length > 1);
   const [activeQualityIndex, setActiveQualityIndex] = React.useState(0);
-  const streamUrl = hasQualities ? internalMedia.qualities![activeQualityIndex].url : internalUrl;
+  const qualities = internalMedia?.type === 'live' ? internalMedia.qualities || [] : [];
+  const safeQualityIndex = qualities.length > 0 ? Math.min(activeQualityIndex, qualities.length - 1) : 0;
+  const currentQuality = qualities[safeQualityIndex] || null;
+  const hasQualities = qualities.length > 1;
+  const streamUrl = currentQuality?.url || internalUrl;
+  const minimizedWidth = layout.isMobile ? 240 : layout.isTablet ? 360 : 480;
+  const minimizedHeight = Math.round(minimizedWidth * 9 / 16);
+  const minimizedBottom = layout.isMobile ? layout.bottomNavigationHeight + 18 : 30;
+  const controlSafeTop = layout.isMobile ? 'max(env(safe-area-inset-top, 0px), 10px)' : 'max(env(safe-area-inset-top, 0px), 16px)';
+  const controlSafeRight = `max(env(safe-area-inset-right, 0px), ${layout.isMobile ? 10 : 16}px)`;
   
   const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(streamUrl));
   const authToken = localStorage.getItem('xandeflix_auth_token') || '';
@@ -73,6 +83,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setInternalUrl(url);
     setInternalMedia(media);
   }, [url, media]);
+
+  useEffect(() => {
+    setActiveQualityIndex(0);
+    setShowQualityMenu(false);
+  }, [internalMedia?.id]);
 
   // Set initial category when sidebar opens or categories load
   useEffect(() => {
@@ -86,16 +101,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setStrategy(detectStrategy(streamUrl));
   }, [streamUrl]);
 
+  useEffect(() => {
+    if (activeQualityIndex !== safeQualityIndex) {
+      setActiveQualityIndex(safeQualityIndex);
+    }
+  }, [activeQualityIndex, safeQualityIndex]);
+
   const fallbackNextQuality = React.useCallback(() => {
-    if (hasQualities && activeQualityIndex < media.qualities!.length - 1) {
-      console.log(`[Player] Falha na reprodução. Tentando próxima qualidade: ${media.qualities![activeQualityIndex + 1].name}`);
+    const nextQuality = qualities[safeQualityIndex + 1];
+    if (hasQualities && nextQuality) {
+      console.log(`[Player] Falha na reprodução. Tentando próxima qualidade: ${nextQuality.name}`);
       setActiveQualityIndex(prev => prev + 1);
       setError(`Sinal instável. Alternando qualidade...`);
       setTimeout(() => setError(null), 3000);
       return true;
     }
     return false;
-  }, [hasQualities, activeQualityIndex, media]);
+  }, [hasQualities, qualities, safeQualityIndex]);
 
   const runDiagnostic = async () => {
     setDiagnosing(true);
@@ -558,16 +580,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       animate={{ 
         opacity: 1, 
         scale: 1,
-        width: isMinimized ? (window.innerWidth < 768 ? 240 : 480) : '100vw',
-        height: isMinimized ? (window.innerWidth < 768 ? 135 : 270) : '100vh',
-        bottom: isMinimized ? 30 : 0,
-        right: isMinimized ? 30 : 0,
-        top: isMinimized ? 'auto' : 0,
-        left: isMinimized ? 'auto' : 0,
+        width: isMinimized ? minimizedWidth : layout.width,
+        height: isMinimized ? minimizedHeight : layout.height,
         borderRadius: isMinimized ? 20 : 0,
-        aspectRatio: isMinimized ? '16/9' : 'auto'
       }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      style={{
+        top: isMinimized ? 'auto' : 0,
+        left: isMinimized ? 'auto' : 0,
+        right: isMinimized ? `max(env(safe-area-inset-right, 0px), ${layout.isMobile ? 12 : 24}px)` : 0,
+        bottom: isMinimized ? minimizedBottom : 0,
+        aspectRatio: isMinimized ? '16 / 9' : 'auto',
+      }}
       className={`fixed z-[100] bg-black flex items-center justify-center overflow-hidden shadow-2xl ${
         isMinimized ? 'border-2 border-white/20' : ''
       } ${
@@ -575,9 +599,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }`}
     >
       <div 
-        className={`absolute top-4 right-4 z-[110] flex gap-3 transition-opacity duration-500 delay-100 ${
+        className={`absolute z-[110] flex flex-wrap justify-end gap-3 transition-opacity duration-500 delay-100 ${
           isIdle && !isMinimized ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
+        style={{
+          top: controlSafeTop,
+          right: controlSafeRight,
+          left: layout.isMobile && !isMinimized ? 'max(env(safe-area-inset-left, 0px), 10px)' : 'auto',
+        }}
       >
         {nextEpisode && onPlayNextEpisode && !isMinimized && (
           <button
@@ -610,7 +639,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   title="Alterar Qualidade de Vídeo"
                 >
                   <Settings className={`w-5 h-5 transition-transform duration-300 ${showQualityMenu ? 'rotate-90' : ''}`} />
-                  <span>{media.qualities![activeQualityIndex].name}</span>
+                  <span>{currentQuality?.name || 'AUTO'}</span>
                 </button>
 
                 <AnimatePresence>
@@ -622,7 +651,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       transition={{ duration: 0.15 }}
                       className="absolute right-0 top-[110%] w-36 bg-zinc-900/95 backdrop-blur-2xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-[120] py-2"
                     >
-                      {media.qualities!.map((q, idx) => (
+                      {qualities.map((q, idx) => (
                         <button 
                           key={idx}
                           onClick={(e) => {
@@ -740,7 +769,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 setError(null);
                 setLoading(true);
                 setDiagnostic(null);
-                setStrategy(detectStrategy(url));
+                setStrategy(detectStrategy(streamUrl));
               }}
               className="px-6 py-3 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition-colors"
             >
@@ -793,6 +822,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 220 }}
               className="absolute top-0 left-0 bottom-0 w-full max-w-[650px] bg-zinc-950/80 backdrop-blur-3xl border-r border-white/5 z-[160] flex flex-col shadow-[40px_0_100px_rgba(0,0,0,0.9)]"
+              style={{
+                paddingTop: layout.isMobile ? 'env(safe-area-inset-top, 0px)' : 0,
+                paddingBottom: layout.isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0,
+              }}
             >
               {/* Sidebar Header */}
               <div className="p-8 pb-4 flex items-center justify-between">
@@ -834,7 +867,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <div className="flex-1 flex overflow-hidden border-t border-white/5">
                 {/* Column 1: Categories */}
                 <motion.div 
-                  animate={{ width: activeSidebarColumn === 'categories' ? '45%' : '25%' }}
+                  animate={{
+                    width: layout.isMobile
+                      ? (activeSidebarColumn === 'categories' ? '42%' : '32%')
+                      : activeSidebarColumn === 'categories'
+                        ? '45%'
+                        : '25%'
+                  }}
                   transition={{ type: 'spring', damping: 25, stiffness: 200 }}
                   className="border-r border-white/5 bg-black/20 overflow-y-auto custom-scrollbar"
                   onMouseEnter={() => setActiveSidebarColumn('categories')}
@@ -867,7 +906,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
                 {/* Column 2: Items */}
                 <motion.div 
-                  animate={{ width: activeSidebarColumn === 'items' ? '75%' : '55%' }}
+                  animate={{
+                    width: layout.isMobile
+                      ? (activeSidebarColumn === 'items' ? '68%' : '58%')
+                      : activeSidebarColumn === 'items'
+                        ? '75%'
+                        : '55%'
+                  }}
                   transition={{ type: 'spring', damping: 25, stiffness: 200 }}
                   className="overflow-y-auto bg-black/40 custom-scrollbar"
                   onMouseEnter={() => setActiveSidebarColumn('items')}
@@ -1005,3 +1050,4 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     </motion.div>
   );
 };
+

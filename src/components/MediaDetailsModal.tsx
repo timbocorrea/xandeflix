@@ -1,13 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableHighlight, Image, ImageBackground, Dimensions, ScrollView, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableHighlight, Image, ImageBackground, ScrollView, FlatList } from 'react-native';
 import { motion } from 'motion/react';
 import { Play, ArrowLeft, Star, Loader2, ListPlus, Share2 } from 'lucide-react';
 import { Media } from '../types';
 import { useTMDB } from '../hooks/useTMDB';
+import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
 import { CategoryRow } from './CategoryRow';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface MediaDetailsPageProps {
   media: Media;
@@ -23,6 +22,10 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
   onSelectMedia
 }) => {
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
+  const layout = useResponsiveLayout();
+  const contentPadding = layout.isMobile ? 16 : layout.isTablet ? 24 : 80;
+  const backdropHeight = layout.isMobile ? '52vh' : layout.isTablet ? '60vh' : '70vh';
+  const spacerHeight = layout.height * (layout.isMobile ? 0.22 : layout.isTablet ? 0.28 : 0.35);
 
   useEffect(() => {
     if (media.seasons && media.seasons.length > 0) {
@@ -94,7 +97,7 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
         top: 0,
         left: 0,
         right: 0,
-        height: '70vh',
+        height: backdropHeight,
         overflow: 'hidden',
       }}>
         <motion.div
@@ -123,7 +126,16 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
       </div>
 
       {/* Back button */}
-      <View style={styles.topBar}>
+      <View
+        style={[
+          styles.topBar,
+          layout.isCompact && styles.topBarCompact,
+          {
+            paddingHorizontal: contentPadding,
+            paddingTop: layout.isMobile ? 18 : 30,
+          },
+        ]}
+      >
         <TouchableHighlight
           onPress={onClose}
           style={styles.backButton}
@@ -134,28 +146,35 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
             <Text style={styles.backText}>Voltar</Text>
           </View>
         </TouchableHighlight>
-        <Text style={styles.topLogo}>XANDEFLIX</Text>
+        <Text style={[styles.topLogo, layout.isCompact && styles.topLogoCompact]}>XANDEFLIX</Text>
       </View>
 
       {/* Scrollable content */}
       <ScrollView
         style={{ flex: 1, zIndex: 2 }}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          layout.isCompact && styles.scrollContentCompact,
+          {
+            paddingHorizontal: contentPadding,
+            paddingBottom: layout.bottomNavigationHeight + 40,
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Spacer to push content below the backdrop */}
-        <View style={{ height: SCREEN_HEIGHT * 0.35 }} />
+        <View style={{ height: spacerHeight }} />
 
         {/* Main Content */}
         <View style={styles.contentContainer}>
-          <View style={styles.mainRow}>
+          <View style={[styles.mainRow, layout.isCompact && styles.mainRowCompact]}>
             {/* Poster */}
             <motion.div
               initial={{ opacity: 0, x: -30 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.6, delay: 0.2 }}
             >
-              <View style={styles.posterWrap}>
+              <View style={[styles.posterWrap, layout.isCompact && styles.posterWrapCompact]}>
                 <Image
                   source={{ uri: displayData.thumbnail }}
                   style={styles.poster}
@@ -171,7 +190,7 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
               transition={{ duration: 0.6, delay: 0.3 }}
               style={{ flex: 1 }}
             >
-              <Text style={styles.title}>{media.title}</Text>
+              <Text style={[styles.title, layout.isCompact && styles.titleCompact]}>{media.title}</Text>
 
               {/* Meta badges */}
               <View style={styles.metaRow}>
@@ -191,16 +210,18 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
               </View>
 
               {/* Actions */}
-              <View style={styles.actionRow}>
+              <View style={[styles.actionRow, layout.isCompact && styles.actionRowCompact]}>
                 {(!media.seasons || media.seasons.length === 0) && (
                   <TouchableHighlight
                     onPress={() => onPlay(media)}
-                    style={styles.playBtn}
+                    style={[styles.playBtn, layout.isCompact && styles.playBtnCompact]}
                     underlayColor="#B80710"
                   >
                     <View style={styles.playBtnInner}>
                       <View style={styles.iconWrap}><Play size={22} color="white" fill="white" /></View>
-                      <Text style={styles.playBtnText}>Assistir Agora</Text>
+                      <Text style={[styles.playBtnText, layout.isCompact && styles.playBtnTextCompact]}>
+                        Assistir Agora
+                      </Text>
                     </View>
                   </TouchableHighlight>
                 )}
@@ -223,7 +244,7 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
               </View>
 
               {/* Synopsis */}
-              <View style={styles.synopsisBlock}>
+              <View style={[styles.synopsisBlock, layout.isCompact && styles.synopsisBlockCompact]}>
                 <Text style={styles.sectionLabel}>Sinopse</Text>
                 {tmdbLoading ? (
                   <View style={styles.loaderRow}>
@@ -347,6 +368,9 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     zIndex: 100,
   },
+  topBarCompact: {
+    paddingBottom: 14,
+  },
   backButton: {
     borderRadius: 8,
     paddingHorizontal: 16,
@@ -374,8 +398,15 @@ const styles = StyleSheet.create({
     letterSpacing: -2,
     fontFamily: 'Outfit',
   },
+  topLogoCompact: {
+    fontSize: 24,
+    letterSpacing: -1,
+  },
   scrollContent: {
     paddingHorizontal: 80,
+  },
+  scrollContentCompact: {
+    paddingHorizontal: 16,
   },
   contentContainer: {
     zIndex: 10,
@@ -383,6 +414,9 @@ const styles = StyleSheet.create({
   mainRow: {
     flexDirection: 'row',
   } as any,
+  mainRowCompact: {
+    flexDirection: 'column',
+  },
   posterWrap: {
     width: 260,
     height: 390,
@@ -390,6 +424,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginRight: 50,
   } as any,
+  posterWrapCompact: {
+    width: 180,
+    height: 270,
+    marginRight: 0,
+    marginBottom: 24,
+    alignSelf: 'center',
+  },
   poster: {
     width: '100%',
     height: '100%',
@@ -403,6 +444,12 @@ const styles = StyleSheet.create({
     lineHeight: 60,
     marginBottom: 20,
     maxWidth: '90%',
+  },
+  titleCompact: {
+    fontSize: 32,
+    lineHeight: 38,
+    maxWidth: '100%',
+    marginBottom: 16,
   },
   metaRow: {
     flexDirection: 'row',
@@ -448,12 +495,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 36,
   } as any,
+  actionRowCompact: {
+    flexWrap: 'wrap',
+    rowGap: 12,
+    marginBottom: 28,
+  },
   playBtn: {
     backgroundColor: '#E50914',
     paddingHorizontal: 36,
     paddingVertical: 16,
     borderRadius: 8,
     marginRight: 16,
+  },
+  playBtnCompact: {
+    paddingHorizontal: 24,
+    paddingVertical: 14,
   },
   playBtnInner: {
     flexDirection: 'row',
@@ -465,6 +521,9 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginLeft: 10,
     fontFamily: 'Outfit',
+  },
+  playBtnTextCompact: {
+    fontSize: 16,
   },
   circleBtn: {
     width: 50,
@@ -482,6 +541,9 @@ const styles = StyleSheet.create({
   },
   synopsisBlock: {
     maxWidth: 700,
+  },
+  synopsisBlockCompact: {
+    maxWidth: '100%',
   },
   sectionLabel: {
     fontSize: 14,

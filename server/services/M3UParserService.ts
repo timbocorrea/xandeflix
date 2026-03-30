@@ -1,6 +1,24 @@
 import { Category, Media, MediaType } from "../../src/types/index.js";
 
 export class M3UParserService {
+  private static normalizeArtworkUrl(url: string, fallbackSeed: string): string {
+    const trimmed = url.trim();
+
+    if (!trimmed) {
+      return `https://picsum.photos/seed/${encodeURIComponent(fallbackSeed)}/400/225`;
+    }
+
+    if (trimmed.startsWith('//')) {
+      return `https:${trimmed}`;
+    }
+
+    if (trimmed.startsWith('http://')) {
+      return `https://${trimmed.substring('http://'.length)}`;
+    }
+
+    return trimmed;
+  }
+
   /**
    * Parses basic EXTINF attributes from a line
    */
@@ -46,7 +64,10 @@ export class M3UParserService {
       else if (isMovieCategory) type = MediaType.MOVIE;
     }
 
-    let thumbnail = logoMatch ? logoMatch[1] : `https://picsum.photos/seed/${encodeURIComponent(name)}/400/225`;
+    let thumbnail = this.normalizeArtworkUrl(
+      logoMatch ? logoMatch[1] : '',
+      name
+    );
     
     // Clean dead domains to prevent heavy console errors
     if (thumbnail && (thumbnail.includes('xvbroker.click') || thumbnail.includes('missing-image'))) {
