@@ -31,6 +31,19 @@ export class AdminService {
   private static users: UserRecord[] = [];
   private static initialized = false;
 
+  private static canFallbackToLocal(): boolean {
+    return process.env.NODE_ENV !== 'production' && !process.env.VERCEL;
+  }
+
+  private static createPersistenceError(action: string, cause?: unknown): Error {
+    const detail = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+    const suffix = detail ? ` Detalhe: ${detail}` : '';
+
+    return new Error(
+      `${action} exige persistencia no Supabase neste ambiente. Configure o backend com acesso de escrita ao banco.${suffix}`,
+    );
+  }
+
   private static normalizeIdentifier(value: string): string {
     return value.trim().toLowerCase();
   }
@@ -102,24 +115,19 @@ export class AdminService {
 
   private static async listSupabaseUsers(): Promise<UserRecord[]> {
     if (!supabase) {
-      return [];
+      throw new Error('Supabase indisponivel');
     }
 
-    try {
-      const { data, error } = await supabase
-        .from('xandeflix_users')
-        .select('*')
-        .order('created_at', { ascending: false });
+    const { data, error } = await supabase
+      .from('xandeflix_users')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-      if (error) {
-        throw error;
-      }
-
-      return (data || []).map((user) => this.mapSupabaseUser(user as SupabaseUserRow));
-    } catch (err) {
-      console.warn('[ADMIN] Supabase error (listing users), falling back to local file:', err);
-      return [];
+    if (error) {
+      throw error;
     }
+
+    return (data || []).map((user) => this.mapSupabaseUser(user as SupabaseUserRow));
   }
 
   private static async findSupabaseUserById(userId: string): Promise<UserRecord | null> {
@@ -282,12 +290,22 @@ export class AdminService {
   public static async listUsers(): Promise<UserRecord[]> {
     this.initialize();
 
+    if (!supabase) {
+      if (this.canFallbackToLocal()) {
+        return this.users.map((user) => ({ ...user }));
+      }
+
+      throw this.createPersistenceError('Listar usuarios');
+    }
+
     const supabaseUsers = await this.listSupabaseUsers();
-    if (supabaseUsers.length === 0) {
+    if (supabaseUsers.length === 0 && this.canFallbackToLocal()) {
       return this.users.map((user) => ({ ...user }));
     }
 
-    return this.mergeUsers(supabaseUsers, this.users);
+    return this.canFallbackToLocal()
+      ? this.mergeUsers(supabaseUsers, this.users)
+      : supabaseUsers;
   }
 
   public static async getUserById(userId: string): Promise<UserRecord | null> {
@@ -327,8 +345,16 @@ export class AdminService {
           return true;
         }
       } catch (err) {
+        if (!this.canFallbackToLocal()) {
+          throw this.createPersistenceError(`Atualizar status do usuario ${userId}`, err);
+        }
+
         console.warn(`[ADMIN] Supabase error (toggle status for ${userId}), falling back to local file:`, err);
       }
+    }
+
+    if (!this.canFallbackToLocal()) {
+      throw this.createPersistenceError(`Atualizar status do usuario ${userId}`);
     }
 
     const userIndex = this.users.findIndex((user) => user.id === userId);
@@ -376,8 +402,16 @@ export class AdminService {
           return true;
         }
       } catch (err) {
+        if (!this.canFallbackToLocal()) {
+          throw this.createPersistenceError(`Atualizar usuario ${userId}`, err);
+        }
+
         console.warn(`[ADMIN] Supabase error (updating user ${userId}), falling back to local file:`, err);
       }
+    }
+
+    if (!this.canFallbackToLocal()) {
+      throw this.createPersistenceError(`Atualizar usuario ${userId}`);
     }
 
     const userIndex = this.users.findIndex((user) => user.id === userId);
@@ -436,7 +470,15 @@ export class AdminService {
         return this.mapSupabaseUser(data as SupabaseUserRow);
       }
     } catch (err) {
+      if (!this.canFallbackToLocal()) {
+        throw this.createPersistenceError(`Criar usuario ${newUser.username}`, err);
+      }
+
       console.warn(`[ADMIN] Supabase error (creating user ${newUser.username}), falling back to local file:`, err);
+    }
+
+    if (!this.canFallbackToLocal()) {
+      throw this.createPersistenceError(`Criar usuario ${newUser.username}`);
     }
 
     this.users.push(newUser);
@@ -472,8 +514,16 @@ export class AdminService {
           return true;
         }
       } catch (err) {
+        if (!this.canFallbackToLocal()) {
+          throw this.createPersistenceError(`Excluir usuario ${userId}`, err);
+        }
+
         console.warn(`[ADMIN] Supabase error (deleting user ${userId}), falling back to local file:`, err);
       }
+    }
+
+    if (!this.canFallbackToLocal()) {
+      throw this.createPersistenceError(`Excluir usuario ${userId}`);
     }
 
     const initialLength = this.users.length;

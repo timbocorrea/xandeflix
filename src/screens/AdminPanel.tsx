@@ -23,13 +23,25 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   // Modal State for editing
   const [editingUser, setEditingUser] = useState<any | null>(null);
 
+  const readErrorMessage = useCallback(async (response: Response, fallback: string) => {
+    try {
+      const data = await response.json();
+      return data?.error || data?.message || fallback;
+    } catch {
+      return fallback;
+    }
+  }, []);
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const response = await fetch('/api/admin/users', {
         headers: { 'x-admin-token': authToken }
       });
-      if (!response.ok) throw new Error('Não foi possível carregar os usuários.');
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Não foi possível carregar os usuários.'));
+      }
       const data = await response.json();
       setManagedUsers(data);
     } catch (err: any) {
@@ -37,28 +49,36 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     } finally {
       setLoading(false);
     }
-  }, [setManagedUsers, authToken]);
+  }, [setManagedUsers, authToken, readErrorMessage]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const handleToggleStatus = async (userId: string, currentStatus: boolean) => {
     setActionLoading(userId);
+    setError(null);
     try {
-      await fetch('/api/admin/user/status', {
+      const response = await fetch('/api/admin/user/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ userId, blocked: !currentStatus })
       });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Não foi possível atualizar o status.'));
+      }
       await fetchUsers();
-    } catch (err) { console.error(err); } 
+    } catch (err: any) {
+      setError(err.message);
+      console.error(err);
+    } 
     finally { setActionLoading(null); }
   };
 
   const handleAddUser = async () => {
     if (!newUserName || !newUserUsername) return;
     setLoading(true);
+    setError(null);
     try {
-      await fetch('/api/admin/user/add', {
+      const response = await fetch('/api/admin/user/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ 
@@ -68,33 +88,47 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
           password: newUserPassword 
         })
       });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Não foi possível criar o usuário.'));
+      }
       setNewUserName('');
       setNewUserUrl('');
       setNewUserUsername('');
       setNewUserPassword('');
       await fetchUsers();
-    } catch (err) { console.error(err); } 
+    } catch (err: any) {
+      setError(err.message);
+      console.error(err);
+    } 
     finally { setLoading(false); }
   };
 
   const handleDeleteUser = async (userId: string) => {
     if (!confirm('Tem certeza que deseja remover este acesso?')) return;
     setActionLoading(userId);
+    setError(null);
     try {
-      await fetch(`/api/admin/user/${userId}`, {
+      const response = await fetch(`/api/admin/user/${userId}`, {
         method: 'DELETE',
         headers: { 'x-admin-token': authToken }
       });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Não foi possível remover o usuário.'));
+      }
       await fetchUsers();
-    } catch (err) { console.error(err); } 
+    } catch (err: any) {
+      setError(err.message);
+      console.error(err);
+    } 
     finally { setActionLoading(null); }
   };
 
   const handleUpdateUser = async () => {
     if (!editingUser) return;
     setActionLoading(editingUser.id);
+    setError(null);
     try {
-      await fetch('/api/admin/user/update', {
+      const response = await fetch('/api/admin/user/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ 
@@ -105,9 +139,15 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
           playlistUrl: editingUser.playlistUrl 
         })
       });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Não foi possível salvar as alterações.'));
+      }
       setEditingUser(null);
       await fetchUsers();
-    } catch (err) { console.error(err); } 
+    } catch (err: any) {
+      setError(err.message);
+      console.error(err);
+    } 
     finally { setActionLoading(null); }
   };
 
@@ -177,6 +217,12 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
               <Icon><Shield size={20} color="#E50914" /></Icon>
               <span style={s.cardTitle}>GERENCIAR USUÁRIOS</span>
             </div>
+
+            {error && (
+              <div style={s.errorBanner}>
+                {error}
+              </div>
+            )}
 
             {loading ? (
               <div style={{ textAlign: 'center', padding: 40, color: '#E50914' }}>Carregando...</div>
@@ -332,6 +378,16 @@ const s: Record<string, React.CSSProperties> = {
   card: { backgroundColor: '#0d0d0d', borderRadius: 20, padding: 30, marginBottom: 30, border: '1px solid rgba(255,255,255,0.05)' },
   cardHeader: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 30 },
   cardTitle: { fontSize: 20, fontWeight: 900, color: 'white', textTransform: 'uppercase', letterSpacing: 1 },
+  errorBanner: {
+    marginBottom: 18,
+    padding: '14px 16px',
+    borderRadius: 12,
+    border: '1px solid rgba(239,68,68,0.25)',
+    backgroundColor: 'rgba(127,29,29,0.35)',
+    color: '#FCA5A5',
+    fontSize: 14,
+    fontWeight: 600,
+  },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, alignItems: 'end' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: 8 },
   label: { fontSize: 12, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700 },
