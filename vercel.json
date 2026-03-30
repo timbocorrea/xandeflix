@@ -1,13 +1,7 @@
 {
   "functions": {
     "api/[...path].ts": {
-      "includeFiles": [
-        "server.ts",
-        "server/**",
-        "src/types/**",
-        "users.json",
-        ".env.example"
-      ]
+      "includeFiles": "{server.ts,server/**,src/types/**,users.json,.env.example}"
     }
   },
   "routes": [
