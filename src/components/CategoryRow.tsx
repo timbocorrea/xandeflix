@@ -125,7 +125,16 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <Text style={styles.categoryTitle}>{category.title}</Text>
+      <Pressable 
+        onPress={() => onSeeAll(category)}
+        style={({ hovered }) => [
+          styles.titleContainer,
+          hovered && { opacity: 1, transform: 'translateX(5px)' }
+        ]}
+      >
+        <Text style={styles.categoryTitle}>{category.title}</Text>
+        <ChevronRight size={24} color="#E50914" style={{ marginLeft: 10, opacity: isHovered ? 1 : 0 }} />
+      </Pressable>
       
       <View 
         style={styles.listWrapper}
@@ -217,12 +226,20 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '900',
     color: 'white',
-    marginBottom: 24,
     fontFamily: 'Outfit',
     letterSpacing: 1.5,
     textTransform: 'uppercase',
     opacity: 0.9,
   },
+  titleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+    // @ts-ignore
+    transition: 'all 0.3s ease',
+    cursor: 'pointer',
+    alignSelf: 'flex-start',
+  } as any,
   flatListContent: {
     paddingRight: 100,
     paddingVertical: 20,

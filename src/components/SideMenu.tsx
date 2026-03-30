@@ -62,7 +62,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
   return (
     <div
       className={cn(
-        "side-menu-container fixed left-0 top-0 bottom-0 z-50 backdrop-blur-xl bg-black/40 border-r border-white/5 flex flex-col py-8 shadow-2xl transition-all duration-500 ease-in-out",
+        "side-menu-container fixed left-0 top-0 bottom-0 z-[1000] backdrop-blur-xl bg-black/40 border-r border-white/5 flex flex-col py-8 shadow-2xl transition-all duration-500 ease-in-out",
         isExpanded ? "w-[280px]" : "w-[80px]"
       )}
       onMouseEnter={() => setIsExpanded(true)}

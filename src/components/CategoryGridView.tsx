@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableHighlight, Image, Dimensions, TextInput } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableHighlight, Image, Dimensions, TextInput } from 'react-native';
 import { X, Search, LayoutGrid, Play, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Media } from '../types';
@@ -81,7 +81,7 @@ export const CategoryGridView: React.FC<CategoryGridViewProps> = ({ category, on
       style={{
         position: 'fixed',
         top: 0,
-        left: 0,
+        left: 80,
         right: 0,
         bottom: 0,
         zIndex: 500,
@@ -93,7 +93,9 @@ export const CategoryGridView: React.FC<CategoryGridViewProps> = ({ category, on
       {/* Grid Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <LayoutGrid size={32} color="#E50914" />
+          <View>
+            <LayoutGrid size={32} color="#E50914" />
+          </View>
           <View style={{ marginLeft: 16 }}>
             <Text style={styles.categoryTitle}>{category.title}</Text>
             <Text style={styles.categorySubtitle}>{category.items.length} conteúdos encontrados</Text>
@@ -126,30 +128,32 @@ export const CategoryGridView: React.FC<CategoryGridViewProps> = ({ category, on
       </View>
 
       {/* Grid Content */}
-      <ScrollView 
+      <FlatList 
         style={styles.gridRoot}
         contentContainerStyle={styles.gridContent}
-        showsVerticalScrollIndicator={true}
-      >
-        <View style={styles.gridContainer}>
-          {filteredItems.map((item, index) => (
-            <GridItem 
-              key={item.id} 
-              item={item} 
-              onPress={onSelectMedia} 
-              index={index}
-            />
-          ))}
-        </View>
-
-        {filteredItems.length === 0 && (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>Nenhum conteúdo combina com sua busca.</Text>
-          </View>
+        data={filteredItems}
+        renderItem={({ item, index }) => (
+          <GridItem 
+            item={item} 
+            onPress={onSelectMedia} 
+            index={index}
+          />
         )}
-        
-        <View style={{ height: 100 }} />
-      </ScrollView>
+        keyExtractor={(item) => item.id}
+        numColumns={6}
+        columnWrapperStyle={styles.gridColumnWrapper}
+        showsVerticalScrollIndicator={true}
+        removeClippedSubviews={true}
+        initialNumToRender={18} // 3 rows
+        maxToRenderPerBatch={12} // 2 rows
+        windowSize={5}
+        ListEmptyComponent={() => (
+           <View style={styles.emptyContainer}>
+             <Text style={styles.emptyText}>Nenhum conteúdo combina com sua busca.</Text>
+           </View>
+        )}
+        ListFooterComponent={() => <View style={{ height: 100 }} />}
+      />
     </motion.div>
   );
 };
@@ -219,13 +223,13 @@ const styles = StyleSheet.create({
   gridContent: {
     padding: 40,
   },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  gridColumnWrapper: {
     justifyContent: 'flex-start',
+    gap: 16,
+    marginBottom: 16,
   },
   cardContainer: {
-    width: '100%',
+    width: (Dimensions.get('window').width - 400) / 6, // Approximate calculation for 6 cols minus sidebar/padding
     aspectRatio: 2/3,
     borderRadius: 12,
     overflow: 'hidden',
