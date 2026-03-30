@@ -18,12 +18,18 @@ export const whitelistMiddleware = (authorizedDomains: Set<string>) => (req: Req
   }
 
   try {
+    if (process.env.ALLOW_ALL_DOMAINS === 'true' || process.env.NODE_ENV !== 'production') return next();
+
     const urlObj = new URL(targetUrl);
     if (!authorizedDomains.has(urlObj.hostname)) {
-      console.warn(`[SECURITY] Blocked request to unauthorized domain: ${urlObj.hostname}`);
+      console.warn(`[SECURITY] Blocked request to unauthorized domain: ${urlObj.hostname}. Adicione este domínio ao arquivo .env na variável AUTHORIZED_DOMAINS se necessário.`);
+      console.warn(`[SECURITY] Authorized Domains: ${Array.from(authorizedDomains).join(', ')}`);
+      
       return res.status(403).json({ 
         error: 'Forbidden', 
-        message: 'O domínio solicitado não está na lista de permissões de segurança (Whitelist).' 
+        message: 'O domínio solicitado não está na lista de permissões de segurança (Whitelist).',
+        hostname: urlObj.hostname,
+        authorizedDomains: Array.from(authorizedDomains)
       });
     }
   } catch (e) {

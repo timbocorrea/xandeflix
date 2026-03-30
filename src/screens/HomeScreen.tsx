@@ -39,7 +39,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const setIsAdminMode = useStore((state) => state.setIsAdminMode);
 
   // Custom Hooks for Data & Filtering
-  const { fetchPlaylist, loading } = usePlaylist();
+  const { fetchPlaylist, loading, playlistStatus, playlistError, playlistSource } = usePlaylist();
   const { filteredCategories } = useMediaFilter();
 
   // Local UI State
@@ -257,7 +257,13 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               backgroundColor: '#050505'
             }}
           >
-            <LoadingScreen />
+            <LoadingScreen statusMessage={
+              playlistStatus === 'loading_user_info' 
+                ? 'Verificando sua conta...' 
+                : playlistStatus === 'loading_playlist'
+                ? `Buscando sua lista de canais...`
+                : 'Carregando sua experiência cinematográfica...'
+            } />
           </motion.div>
         )}
       </AnimatePresence>
@@ -304,11 +310,44 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       {/* Header Branding - Overlays the ScrollView */}
       <View style={styles.header}>
         <Text style={styles.logo}>XANDEFLIX</Text>
-        {isUsingMock && (
+        
+        {/* Playlist Status Feedback */}
+        {(isUsingMock || playlistError) && (
           <View style={styles.mockControls}>
-            <View style={styles.mockBadge}>
-              <Text style={styles.mockBadgeText}>MODO DEMO: LISTA NÃO CARREGADA</Text>
+            {/* Error/Status Badge */}
+            <View style={[
+              styles.mockBadge, 
+              playlistError?.status === 'error_playlist' || playlistError?.status === 'error_auth' 
+                ? { backgroundColor: '#DC2626' } 
+                : { backgroundColor: '#EAB308' }
+            ]}>
+              <Text style={styles.mockBadgeText}>
+                {playlistError?.status === 'error_auth' 
+                  ? '⚠ ERRO DE AUTENTICAÇÃO'
+                  : playlistError?.status === 'error_playlist'
+                  ? '⚠ LISTA NÃO CARREGADA'
+                  : playlistError?.status === 'mock_fallback'
+                  ? '⚠ LISTA VAZIA - MODO DEMO'
+                  : 'MODO DEMO'}
+              </Text>
             </View>
+
+            {/* Error Details */}
+            {playlistError && (
+              <View style={styles.errorDetailsBox}>
+                <Text style={styles.errorMsg}>{playlistError.message}</Text>
+                {playlistError.details && (
+                  <Text style={styles.errorDetails}>{playlistError.details}</Text>
+                )}
+                {playlistError.playlistUrl && (
+                  <Text style={styles.errorUrl} numberOfLines={1}>
+                    URL: {playlistError.playlistUrl.substring(0, 60)}...
+                  </Text>
+                )}
+              </View>
+            )}
+
+            {/* Retry Button */}
             <TouchableHighlight
               onPress={() => fetchPlaylist()}
               underlayColor="rgba(255,255,255,0.1)"
@@ -319,6 +358,24 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 <Text style={styles.retryText}>Tentar Novamente</Text>
               </View>
             </TouchableHighlight>
+          </View>
+        )}
+
+        {/* Loading indicator in header */}
+        {loading && !isUsingMock && (
+          <View style={styles.mockControls}>
+            <View style={[styles.mockBadge, { backgroundColor: '#3B82F6' }]}>
+              <Text style={styles.mockBadgeText}>
+                {playlistStatus === 'loading_user_info' 
+                  ? '⏳ VERIFICANDO CONTA...'
+                  : '⏳ CARREGANDO LISTA...'}
+              </Text>
+            </View>
+            {playlistSource ? (
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontFamily: 'Outfit' }} numberOfLines={1}>
+                {playlistSource.substring(0, 50)}...
+              </Text>
+            ) : null}
           </View>
         )}
       </View>
@@ -413,6 +470,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', 
     alignItems: 'center', 
     gap: 12,
+    flexWrap: 'wrap',
+    paddingRight: 40,
   },
   mockBadge: {
     backgroundColor: '#EAB308',
@@ -425,6 +484,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 1.2,
+  },
+  errorDetailsBox: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    maxWidth: 420,
+  },
+  errorMsg: {
+    color: '#FCA5A5',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: 'Outfit',
+  },
+  errorDetails: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11,
+    marginTop: 2,
+    fontFamily: 'Outfit',
+  },
+  errorUrl: {
+    color: 'rgba(255,255,255,0.3)',
+    fontSize: 10,
+    marginTop: 4,
+    fontFamily: 'monospace',
   },
   retryButton: {
     backgroundColor: 'rgba(255,255,255,0.08)',

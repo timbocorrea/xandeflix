@@ -4,7 +4,11 @@ import { motion } from 'motion/react';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const LoadingScreen: React.FC = () => {
+interface LoadingScreenProps {
+  statusMessage?: string;
+}
+
+const LoadingScreen: React.FC<LoadingScreenProps> = ({ statusMessage }) => {
   return (
     <View style={styles.container}>
       <motion.div
@@ -36,7 +40,7 @@ const LoadingScreen: React.FC = () => {
           />
         </View>
       </motion.div>
-      <Text style={styles.loadingMessage}>Carregando sua experiência cinematográfica...</Text>
+      <Text style={styles.loadingMessage}>{statusMessage || 'Carregando sua experiência cinematográfica...'}</Text>
     </View>
   );
 };

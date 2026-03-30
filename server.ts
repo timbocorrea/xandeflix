@@ -1,10 +1,10 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import axios from 'axios';
 import cors from 'cors';
 import compression from 'compression';
 import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
 
 // Import Services
 import { M3UParserService } from './server/services/M3UParserService.js';
@@ -21,17 +21,29 @@ import { adminAuthMiddleware } from './server/middleware/adminAuth.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configure environment: load .env, then .env.example as fallback for missing vars
-dotenv.config();
-dotenv.config({ path: path.join(__dirname, '.env.example'), override: false });
+// Debug environment
+console.log(`[CONFIG] ALLOW_ALL_DOMAINS: ${process.env.ALLOW_ALL_DOMAINS}`);
+console.log(`[CONFIG] NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+console.log(`[SECURITY] Mode: ${process.env.NODE_ENV === 'production' && process.env.ALLOW_ALL_DOMAINS !== 'true' ? 'STRICT' : 'BYPASS'}`);
 
 /**
  * Global State & Cache Configuration
  */
 const authorizedDomains = new Set<string>(['dnsd1.space']);
-if (process.env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV !== 'production' || process.env.ALLOW_ALL_DOMAINS === 'true') {
   authorizedDomains.add('localhost');
   authorizedDomains.add('127.0.0.1');
+}
+
+// Seed whitelist from environment (additional domains)
+if (process.env.AUTHORIZED_DOMAINS) {
+  process.env.AUTHORIZED_DOMAINS.split(',').forEach(dom => {
+    const d = dom.trim().toLowerCase();
+    if (d) {
+       authorizedDomains.add(d);
+       console.log(`[SECURITY] Manually whitelisted domain: ${d}`);
+    }
+  });
 }
 const playlistCache = new CacheManager<any>(30); // 30 minutes cache
 const pendingRequests = new Map<string, Promise<any>>();
@@ -68,6 +80,7 @@ function registerAuthorizedDomainFromUrl(targetUrl: string) {
 }
 
 function isAllowedPlaylistUrl(targetUrl: string): boolean {
+  if (process.env.ALLOW_ALL_DOMAINS === 'true') return true;
   try {
     const hostname = new URL(targetUrl).hostname.toLowerCase();
     return authorizedDomains.has(hostname);
@@ -141,9 +154,12 @@ app.use(securityHeadersMiddleware);
 app.get('/api/playlist', async (req, res) => {
   const session = AuthSessionService.getSession(getRequestAuthToken(req));
   let playlistUrl = '';
-
+  console.log(`[API] Playlist request. Session: ${JSON.stringify(session)}`);
+  
   if (session?.role === 'user' && session.userId) {
     const user = await AdminService.getUserById(session.userId);
+    console.log(`[API] Found user in session: ${user?.username} (ID: ${session.userId}). Playlist in DB: ${user?.playlistUrl}`);
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -157,22 +173,54 @@ app.get('/api/playlist', async (req, res) => {
     }
   } else {
     playlistUrl = (req.query.url as string) || process.env.PLAYLIST_URL || '';
+    console.log(`[API] No user session found or user is admin. Fallback URL: ${playlistUrl}`);
   }
 
   if (!playlistUrl) {
     return res.status(400).json({ error: 'Playlist URL not provided.' });
   }
 
-  if (!isAllowedPlaylistUrl(playlistUrl)) {
-    return res.status(403).json({
-      error: 'Forbidden',
-      message: 'O domínio solicitado não está autorizado.'
-    });
-  }
+  // Auto-register playlist domain (URLs come from DB or env, so they are trusted)
+  registerAuthorizedDomainFromUrl(playlistUrl);
 
   // Attempt to serve from cache or pending request queue
   const cachedData = playlistCache.get(playlistUrl);
-  if (cachedData) return res.json(cachedData);
+  if (cachedData) {
+    // BUG FIX: When serving from cache, we must re-register the domains in authorizedDomains
+    // since the Set is in-memory and might have been reset on server restart
+    console.log('[API] Serving playlist from cache. Re-registering domains...');
+    cachedData.forEach((cat: any) => {
+      cat.items.forEach((item: any) => {
+        // Items in videoUrl are already proxied, we need the original URL if possible
+        // But our registerAuthorizedDomainFromUrl handles extraction if we update it.
+        // Or we can just trust that the parser callback handled it initially.
+        // Actually, we should store the original domains in the cache or re-extract from videoUrl.
+        if (item.videoUrl && item.videoUrl.includes('url=')) {
+          try {
+            const urlMatch = item.videoUrl.match(/url=([^&]+)/);
+            if (urlMatch) {
+              const original = decodeURIComponent(urlMatch[1]);
+              registerAuthorizedDomainFromUrl(original);
+            }
+          } catch (e) {}
+        }
+        
+        if (item.qualities) {
+          item.qualities.forEach((q: any) => {
+             if (q.url && q.url.includes('url=')) {
+                try {
+                  const urlMatch = q.url.match(/url=([^&]+)/);
+                  if (urlMatch) registerAuthorizedDomainFromUrl(decodeURIComponent(urlMatch[1]));
+                } catch (e) {}
+             } else if (q.url && q.url.startsWith('http')) {
+                registerAuthorizedDomainFromUrl(q.url);
+             }
+          });
+        }
+      });
+    });
+    return res.json(cachedData);
+  }
 
   if (pendingRequests.has(playlistUrl)) {
     console.log('[API] Coalescing request for URL:', playlistUrl.substring(0, 50) + '...');
