@@ -486,4 +486,17 @@ async function startLocalServer() {
   });
 }
 
-startLocalServer();
+const isDirectExecution = (() => {
+  const entryFile = process.argv[1];
+  if (!entryFile) return false;
+
+  try {
+    return path.resolve(entryFile) === __filename;
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectExecution) {
+  startLocalServer();
+}
