@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import mpegts from 'mpegts.js';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
-import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings, Menu, Search, ChevronRight } from 'lucide-react';
+import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings, Menu, Search, ChevronRight, ChevronLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Media, Category } from '../types';
 import { useStore } from '../store/useStore';
@@ -59,6 +59,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = React.useState<string | null>(null);
   const [channelSearchQuery, setChannelSearchQuery] = React.useState('');
+  const [activeSidebarColumn, setActiveSidebarColumn] = React.useState<'categories' | 'items'>('categories');
 
   const hasQualities = !!(internalMedia?.type === 'live' && internalMedia?.qualities && internalMedia.qualities.length > 1);
   const [activeQualityIndex, setActiveQualityIndex] = React.useState(0);
@@ -234,6 +235,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (onPlayNextEpisode) onPlayNextEpisode();
   };
 
+  const goToAdjacentChannel = React.useCallback((direction: 1 | -1) => {
+    if (!internalMedia || !allCategories.length) return;
+
+    // Find the category containing the current media
+    const currentCategory = allCategories.find(cat => 
+      cat.items.some(item => item.id === internalMedia.id)
+    );
+
+    if (!currentCategory) return;
+
+    const currentIndex = currentCategory.items.findIndex(item => item.id === internalMedia.id);
+    if (currentIndex === -1) return;
+
+    // Calculate next index with wrap-around
+    let nextIndex = currentIndex + direction;
+    if (nextIndex >= currentCategory.items.length) nextIndex = 0;
+    if (nextIndex < 0) nextIndex = currentCategory.items.length - 1;
+
+    const nextMedia = currentCategory.items[nextIndex];
+    if (nextMedia) {
+      setInternalUrl(nextMedia.videoUrl);
+      setInternalMedia(nextMedia);
+      setActiveQualityIndex(0);
+      setLoading(true);
+      setError(null);
+    }
+  }, [internalMedia, allCategories]);
+
   // ── Cleanup on unmount ──
   useEffect(() => {
     return () => {
@@ -261,7 +290,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const video = videoRef.current;
     if (!video) return;
 
-    console.log(`[Player] Strategy: ${strategy} for ${url.substring(0, 80)}...`);
+    console.log(`[Player] Strategy: ${strategy} for ${streamUrl.substring(0, 80)}...`);
 
     if (strategy === 'mpegts') {
       initMpegTs(video);
@@ -270,8 +299,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } else {
       initNative(video);
     }
+  }, [streamUrl, strategy, skipTime]);
 
-    // Keyboard handler
+  // ── Keyboard handler ──
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
@@ -280,13 +311,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         else onClose();
       }
       else if (e.key === 'Backspace') onClose();
-      else if (e.key === 'ArrowRight' && !isSidebarOpen) skipTime(10);
-      else if (e.key === 'ArrowLeft' && !isSidebarOpen) skipTime(-10);
+      else if (e.key === 'ArrowRight' && !isSidebarOpen) {
+        if (internalMedia?.type === 'live') goToAdjacentChannel(1);
+        else skipTime(10);
+      }
+      else if (e.key === 'ArrowLeft' && !isSidebarOpen) {
+        if (internalMedia?.type === 'live') goToAdjacentChannel(-1);
+        else skipTime(-10);
+      }
       else if (e.key === 'm' || e.key === 'M') setIsSidebarOpen(!isSidebarOpen);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [streamUrl, strategy, skipTime, isSidebarOpen]);
+  }, [isSidebarOpen, skipTime, onClose]);
 
   // ── mpegts.js for raw MPEG-TS streams ──
   function initMpegTs(video: HTMLVideoElement) {
@@ -549,18 +586,32 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
             )}
             <button 
-              onClick={() => skipTime(-10)}
+              onClick={() => {
+                if (internalMedia?.type === 'live') goToAdjacentChannel(-1);
+                else skipTime(-10);
+              }}
               className="p-3 backdrop-blur-xl bg-black/40 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
-              title="Voltar 10 segundos"
+              title={internalMedia?.type === 'live' ? "Canal Anterior" : "Voltar 10 segundos"}
             >
-              <Rewind className="text-white w-6 h-6 group-hover:-translate-x-1 transition-transform" />
+              {internalMedia?.type === 'live' ? (
+                <ChevronLeft className="text-white w-6 h-6 group-hover:-translate-x-1 transition-transform" />
+              ) : (
+                <Rewind className="text-white w-6 h-6 group-hover:-translate-x-1 transition-transform" />
+              )}
             </button>
             <button 
-              onClick={() => skipTime(10)}
+              onClick={() => {
+                if (internalMedia?.type === 'live') goToAdjacentChannel(1);
+                else skipTime(10);
+              }}
               className="p-3 backdrop-blur-xl bg-black/40 hover:bg-white/10 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
-              title="Avançar 10 segundos"
+              title={internalMedia?.type === 'live' ? "Próximo Canal" : "Avançar 10 segundos"}
             >
-              <FastForward className="text-white w-6 h-6 group-hover:translate-x-1 transition-transform" />
+              {internalMedia?.type === 'live' ? (
+                <ChevronRight className="text-white w-6 h-6 group-hover:translate-x-1 transition-transform" />
+              ) : (
+                <FastForward className="text-white w-6 h-6 group-hover:translate-x-1 transition-transform" />
+              )}
             </button>
           </>
         )}
@@ -668,21 +719,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       <AnimatePresence>
         {isSidebarOpen && (
           <>
-            {/* Backdrop click to close */}
+            {/* Light backdrop (transparent, no blur to see content) */}
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsSidebarOpen(false)}
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[150]"
+              className="absolute inset-0 bg-black/10 z-[150]"
             />
 
             <motion.div
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="absolute top-0 left-0 bottom-0 w-full max-w-[600px] bg-zinc-950/95 backdrop-blur-3xl border-r border-white/10 z-[160] flex flex-col shadow-[20px_0_50px_rgba(0,0,0,0.8)]"
+              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+              className="absolute top-0 left-0 bottom-0 w-full max-w-[650px] bg-zinc-950/80 backdrop-blur-3xl border-r border-white/5 z-[160] flex flex-col shadow-[40px_0_100px_rgba(0,0,0,0.9)]"
             >
               {/* Sidebar Header */}
               <div className="p-8 pb-4 flex items-center justify-between">
@@ -710,20 +761,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     placeholder="Buscar canal, filme ou série..."
                     className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-red-600/50 transition-colors font-medium"
                     value={channelSearchQuery}
-                    onChange={(e) => setChannelSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setChannelSearchQuery(e.target.value);
+                      if (e.target.value) setActiveSidebarColumn('items');
+                    }}
+                    onFocus={() => setActiveSidebarColumn('items')}
                     autoFocus
                   />
                 </div>
               </div>
 
-              {/* Two Column Content */}
+              {/* Two Column Content with Dynamic Widths */}
               <div className="flex-1 flex overflow-hidden border-t border-white/5">
                 {/* Column 1: Categories */}
-                <div className="w-1/3 border-r border-white/5 bg-black/20 overflow-y-auto custom-scrollbar">
+                <motion.div 
+                  animate={{ width: activeSidebarColumn === 'categories' ? '45%' : '25%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  className="border-r border-white/5 bg-black/20 overflow-y-auto custom-scrollbar"
+                  onMouseEnter={() => setActiveSidebarColumn('categories')}
+                >
                   {allCategories.map((cat) => (
                     <button
                       key={cat.id}
-                      onClick={() => setSelectedCategoryId(cat.id)}
+                      onClick={() => {
+                        setSelectedCategoryId(cat.id);
+                        setActiveSidebarColumn('items');
+                      }}
+                      onMouseEnter={() => setSelectedCategoryId(cat.id)}
                       className={`w-full text-left px-8 py-5 transition-all relative flex items-center justify-between group ${
                         (selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === allCategories[0]?.id))
                           ? 'bg-red-600/10 text-white font-bold'
@@ -734,13 +798,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       {(selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === allCategories[0]?.id)) && (
                         <motion.div layoutId="activeCat" className="absolute left-0 top-0 bottom-0 w-1 bg-red-600 shadow-[0_0_10px_rgba(229,9,20,0.5)]" />
                       )}
-                      <ChevronRight className={`w-4 h-4 transition-transform ${selectedCategoryId === cat.id ? 'translate-x-0' : '-translate-x-2 opacity-0 group-hover:opacity-100'}`} />
+                      
+                      {activeSidebarColumn === 'categories' && (
+                        <ChevronRight className={`w-4 h-4 transition-transform ${selectedCategoryId === cat.id ? 'translate-x-0' : '-translate-x-2 opacity-0 group-hover:opacity-100'}`} />
+                      )}
                     </button>
                   ))}
-                </div>
+                </motion.div>
 
                 {/* Column 2: Items */}
-                <div className="flex-1 overflow-y-auto bg-black/40 custom-scrollbar">
+                <motion.div 
+                  animate={{ width: activeSidebarColumn === 'items' ? '75%' : '55%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  className="overflow-y-auto bg-black/40 custom-scrollbar"
+                  onMouseEnter={() => setActiveSidebarColumn('items')}
+                >
                   <div className="p-2">
                     {(() => {
                       const activeCat = allCategories.find(c => c.id === (selectedCategoryId || allCategories[0]?.id));
@@ -806,7 +878,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       ));
                     })()}
                   </div>
-                </div>
+                </motion.div>
               </div>
 
               {/* Sidebar Footer */}
