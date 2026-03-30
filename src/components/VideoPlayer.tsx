@@ -117,9 +117,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [hasCancelled, setHasCancelled] = React.useState(false);
   
   const setPlaybackProgress = useStore((state) => state.setPlaybackProgress);
+  const syncProgressToSupabase = useStore((state) => state.syncProgressToSupabase);
+  const userId = localStorage.getItem('xandeflix_user_id');
+  
   const progressId = media?.currentEpisode?.id || media?.id || encodeURIComponent(streamUrl);
   const initialSeekDone = useRef(false);
   const lastSavedTime = useRef(0);
+  const lastSyncedTime = useRef(0);
 
   const [isIdle, setIsIdle] = React.useState(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -191,6 +195,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           lastSavedTime.current = currentTime;
           setPlaybackProgress(progressId, currentTime, duration);
         }
+
+        // Sync with Supabase every 60 seconds
+        if (userId && Math.abs(currentTime - lastSyncedTime.current) > 60) {
+          lastSyncedTime.current = currentTime;
+          syncProgressToSupabase(userId, progressId, currentTime, duration);
+        }
       }
       }
 
@@ -207,7 +217,56 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 500);
 
     return () => clearInterval(interval);
-  }, [strategy, onPlayNextEpisode]);
+  }, [strategy, onPlayNextEpisode, userId, progressId, setPlaybackProgress, syncProgressToSupabase]);
+
+  // Sync on Pause & Unmount
+  useEffect(() => {
+    const handleManualSync = () => {
+      let currentTime = 0;
+      let duration = 0;
+
+      if (strategy === 'hls' && playerRef.current) {
+        currentTime = playerRef.current.currentTime() || 0;
+        duration = playerRef.current.duration() || 0;
+      } else if (videoRef.current) {
+        currentTime = videoRef.current.currentTime || 0;
+        duration = videoRef.current.duration || 0;
+      }
+
+      if (userId && currentTime > 0 && duration > 0) {
+        syncProgressToSupabase(userId, progressId, currentTime, duration);
+        lastSyncedTime.current = currentTime;
+      }
+    };
+
+    const videoElement = videoRef.current;
+    
+    // We can't easily attach to playerRef.current during first render, 
+    // so we handle it inside the existing strategy-specific blocks or use this interval/event pattern
+    const interval = setInterval(() => {
+       const vjsPlayer = playerRef.current;
+       if (strategy === 'hls' && vjsPlayer && typeof vjsPlayer.on === 'function') {
+          vjsPlayer.on('pause', handleManualSync);
+          clearInterval(interval);
+       } else if (videoElement) {
+          videoElement.addEventListener('pause', handleManualSync);
+          clearInterval(interval);
+       }
+    }, 1000);
+
+    return () => {
+      // Final sync on unmount
+      handleManualSync();
+      clearInterval(interval);
+      
+      const vjsPlayer = playerRef.current;
+      if (strategy === 'hls' && vjsPlayer && typeof vjsPlayer.off === 'function') {
+        vjsPlayer.off('pause', handleManualSync);
+      } else if (videoElement) {
+        videoElement.removeEventListener('pause', handleManualSync);
+      }
+    };
+  }, [progressId, userId, syncProgressToSupabase, strategy]);
 
   const skipTime = React.useCallback((amount: number) => {
     let currentTime = 0;

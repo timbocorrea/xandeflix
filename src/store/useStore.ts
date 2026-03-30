@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { Category, Media } from '../types';
+import { supabase } from '../lib/supabase';
 
 interface XandeflixState {
   // Playlist State
@@ -29,6 +30,7 @@ interface XandeflixState {
   // Persistent user progress
   playbackProgress: Record<string, { currentTime: number; duration: number; timestamp: number }>;
   setPlaybackProgress: (id: string, currentTime: number, duration: number) => void;
+  syncProgressToSupabase: (userId: string, mediaId: string, currentTime: number, duration: number) => Promise<void>;
 
   // Administrative State (persisted in localStorage)
   isAdminMode: boolean;
@@ -78,5 +80,23 @@ export const useStore = create<XandeflixState>((set) => ({
       localStorage.setItem('xandeflix_playback_progress', JSON.stringify(newProgress));
       return { playbackProgress: newProgress };
     });
+  },
+  syncProgressToSupabase: async (userId, mediaId, currentTime, duration) => {
+    try {
+      const { error } = await supabase
+        .from('playback_progress')
+        .upsert({
+          user_id: userId,
+          media_id: mediaId,
+          playback_time: currentTime,
+          duration: duration,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id,media_id' });
+
+      if (error) throw error;
+      console.log(`[Supabase] Progresso sincronizado para ${mediaId}`);
+    } catch (err) {
+      console.error('[Supabase] Erro ao sincronizar progresso:', err);
+    }
   },
 }));

@@ -34,9 +34,21 @@ CREATE TABLE IF NOT EXISTS public.playback_progress (
     UNIQUE(user_id, media_id) 
 );
 
--- Habilitar conexões abertas pela nossa aplicação (Desbloqueando Firewalls Padrões)
+-- Habilitar Segurança em Nível de Linha (RLS)
 ALTER TABLE public.xandeflix_users ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Permissao Total User" ON public.xandeflix_users FOR ALL USING (true);
+
+-- Política: Usuários só veem seus próprios dados de perfil
+CREATE POLICY "User Profile Access" ON public.xandeflix_users 
+FOR SELECT 
+USING (auth.uid() = id);
+
+-- Política: Administradores têm acesso total (exemplo opcional)
+-- CREATE POLICY "Admin Full Access" ON public.xandeflix_users FOR ALL USING (role = 'admin');
 
 ALTER TABLE public.playback_progress ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Permissao Total Progress" ON public.playback_progress FOR ALL USING (true);
+
+-- Política: Usuários só gerenciam seu próprio progresso de vídeo
+CREATE POLICY "User Progress Ownership" ON public.playback_progress 
+FOR ALL 
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
