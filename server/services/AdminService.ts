@@ -149,6 +149,20 @@ export class AdminService {
     const merged: UserRecord[] = [];
     const seenKeys = new Set<string>();
 
+    // Inherit missing optional fields from secondary users before deduplicating
+    for (const pUser of primaryUsers) {
+      const pUsername = this.normalizeIdentifier(pUser.username || pUser.id);
+      const sUser = secondaryUsers.find(s => s.id === pUser.id || this.normalizeIdentifier(s.username || s.id) === pUsername);
+      if (sUser) {
+        if (!pUser.hiddenCategories || pUser.hiddenCategories.length === 0) {
+          pUser.hiddenCategories = sUser.hiddenCategories;
+        }
+        if (!pUser.categoryOverrides || Object.keys(pUser.categoryOverrides).length === 0) {
+          pUser.categoryOverrides = sUser.categoryOverrides;
+        }
+      }
+    }
+
     for (const user of [...primaryUsers, ...secondaryUsers]) {
       const usernameKey = this.normalizeIdentifier(user.username || user.id);
       const idKey = user.id;
@@ -418,6 +432,17 @@ export class AdminService {
 
     const supabaseUser = await this.findSupabaseUserById(userId);
     if (supabaseUser) {
+      if (this.canFallbackToLocal()) {
+        const localUser = this.findLocalUserById(userId);
+        if (localUser) {
+           if (!supabaseUser.hiddenCategories || supabaseUser.hiddenCategories.length === 0) {
+             supabaseUser.hiddenCategories = localUser.hiddenCategories;
+           }
+           if (!supabaseUser.categoryOverrides || Object.keys(supabaseUser.categoryOverrides).length === 0) {
+             supabaseUser.categoryOverrides = localUser.categoryOverrides;
+           }
+        }
+      }
       return supabaseUser;
     }
 
@@ -763,6 +788,18 @@ export class AdminService {
             ...(user as SupabaseUserRow),
             last_access: now,
           });
+
+          if (this.canFallbackToLocal()) {
+            const localFallback = this.findLocalUserById(mappedUser.id);
+            if (localFallback) {
+              if (!mappedUser.hiddenCategories || mappedUser.hiddenCategories.length === 0) {
+                mappedUser.hiddenCategories = localFallback.hiddenCategories;
+              }
+              if (!mappedUser.categoryOverrides || Object.keys(mappedUser.categoryOverrides).length === 0) {
+                mappedUser.categoryOverrides = localFallback.categoryOverrides;
+              }
+            }
+          }
 
           console.log(`[AUTH] User authenticated via Supabase: ${mappedUser.name} (${mappedUser.id})`);
           return {

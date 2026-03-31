@@ -27,8 +27,7 @@
     "lastAccess": "2026-03-30T15:41:23.957Z",
     "categoryOverrides": {
       "canais-i-sess-o-cinema": "live",
-      "cine-filmes-hd-24hrs": "live",
-      "cinema-ruim-cam-propaganda": "live"
+      "cine-filmes-hd-24hrs": "live"
     },
     "hiddenCategories": []
   }
