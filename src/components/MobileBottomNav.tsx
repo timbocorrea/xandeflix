@@ -1,19 +1,18 @@
 import React from 'react';
-import { Search, Home, Film, Tv, Settings, Radio, Heart } from 'lucide-react';
+import { Search, Home, Film, Tv, Radio } from 'lucide-react';
 
 interface MobileBottomNavProps {
   activeId?: string;
   onSelect?: (id: string) => void;
 }
 
+// 5 primary items that fit on one row with comfortable 44px+ touch targets
 const ITEMS = [
-  { id: 'search', label: 'Busca', icon: Search },
-  { id: 'home', label: 'Inicio', icon: Home },
-  { id: 'mylist', label: 'Lista', icon: Heart },
-  { id: 'live', label: 'Ao Vivo', icon: Radio },
-  { id: 'movie', label: 'Filmes', icon: Film },
-  { id: 'series', label: 'Series', icon: Tv },
-  { id: 'settings', label: 'Ajustes', icon: Settings },
+  { id: 'home',   label: 'Início',   icon: Home },
+  { id: 'live',   label: 'Ao Vivo',  icon: Radio },
+  { id: 'movie',  label: 'Filmes',   icon: Film },
+  { id: 'series', label: 'Séries',   icon: Tv },
+  { id: 'search', label: 'Busca',    icon: Search },
 ];
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
@@ -24,15 +23,23 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
     <div
       style={{
         position: 'fixed',
-        left: 12,
-        right: 12,
-        bottom: 'max(env(safe-area-inset-bottom, 0px), 12px)',
+        left: 0,
+        right: 0,
+        bottom: 0,
         zIndex: 1200,
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 8px)',
+        backgroundColor: 'rgba(5,5,5,0.95)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        borderTop: '1px solid rgba(255,255,255,0.07)',
       }}
     >
       <div
-        className="grid grid-cols-7 rounded-[28px] border border-white/10 bg-black/85 backdrop-blur-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)]"
-        style={{ padding: '10px 8px' }}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(5, 1fr)',
+          padding: '6px 0 2px',
+        }}
       >
         {ITEMS.map((item) => {
           const Icon = item.icon;
@@ -42,17 +49,51 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             <button
               key={item.id}
               onClick={() => onSelect?.(item.id)}
-              className={`flex min-h-[64px] flex-col items-center justify-center rounded-2xl px-1 text-center transition-colors ${
-                isActive ? 'bg-white/10 text-white' : 'text-white/55 hover:bg-white/5 hover:text-white'
-              }`}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                minHeight: 52,
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                padding: '6px 4px',
+                position: 'relative',
+                color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
+                transition: 'color 0.2s',
+                WebkitTapHighlightColor: 'transparent',
+              }}
               title={item.label}
             >
+              {/* Active indicator dot above icon */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 3,
+                  width: 4,
+                  height: 4,
+                  borderRadius: 2,
+                  backgroundColor: isActive ? '#E50914' : 'transparent',
+                  transition: 'background-color 0.2s',
+                }}
+              />
               <Icon
-                size={20}
+                size={22}
                 color={isActive ? '#E50914' : 'currentColor'}
                 strokeWidth={isActive ? 2.4 : 1.8}
               />
-              <span className="mt-1 text-[10px] font-black uppercase tracking-[0.14em]">
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: isActive ? 900 : 600,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  fontFamily: 'Outfit, sans-serif',
+                  lineHeight: 1,
+                }}
+              >
                 {item.label}
               </span>
             </button>

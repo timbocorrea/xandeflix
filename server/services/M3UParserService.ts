@@ -74,9 +74,17 @@ export class M3UParserService {
       name
     );
     
-    // Clean dead domains to prevent heavy console errors
-    if (thumbnail && (thumbnail.includes('xvbroker.click') || thumbnail.includes('missing-image'))) {
-      thumbnail = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop`;
+    // Sanitize thumbnails from known dead/invalid domains to prevent console errors.
+    // gstaticontent.com = pirate CDN clone of Google's TMDB image server (SSL cert invalid)
+    // timg.bdta.pro = IPTV metadata server that is offline
+    const DEAD_DOMAINS = [
+      'xvbroker.click',
+      'missing-image',
+      'gstaticontent.com',
+      'timg.bdta.pro',
+    ];
+    if (thumbnail && DEAD_DOMAINS.some(d => thumbnail.includes(d))) {
+      thumbnail = '';
     }
 
     return {

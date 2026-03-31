@@ -133,37 +133,66 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     return () => clearTimeout(focusTimer);
   }, [activeFilter]);
 
+  // isBrowsing: player docked at top, content browser below
+  const isBrowsing = !!activeVideoUrl && isPlayerMinimized;
+
   // Handle play action
   const handlePlay = useCallback(async (media: Media) => {
-    try {
-      if (typeof document !== 'undefined' && document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
+    // Don't enter fullscreen if already in browse mode — stay in browse layout
+    if (!isBrowsing) {
+      try {
+        if (typeof document !== 'undefined' && document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (e) {
+        console.warn('Could not auto-enter fullscreen:', e);
       }
-    } catch (e) {
-      console.warn('Could not auto-enter fullscreen:', e);
     }
     
     setPlayingMedia(media);
     setActiveVideoUrl(media.videoUrl);
     setVideoType(media.type);
-    setIsPlayerMinimized(false); // Sempre abre em tela cheia ao clicar
+    // When already browsing, stay in browse mode. Otherwise open fullscreen
+    if (!isBrowsing) {
+      setIsPlayerMinimized(false);
+    }
     setIsAutoRotating(false);
-    setIsDetailsVisible(false); // Close details if open
-  }, []);
+    setIsDetailsVisible(false);
+  }, [isBrowsing]);
 
   const handleMediaPress = useCallback((media: Media) => {
     if (media.type === 'movie' || media.type === 'series') {
-      setDetailsMedia(media);
-      setIsDetailsVisible(true);
+      if (isBrowsing) {
+        // In browse mode, tap goes straight to player (no detail modal)
+        handlePlay(media);
+      } else {
+        setDetailsMedia(media);
+        setIsDetailsVisible(true);
+      }
     } else {
-      // Live content goes straight to player
       handlePlay(media);
     }
-  }, [handlePlay]);
+  }, [handlePlay, isBrowsing]);
 
   const handleToggleMinimize = useCallback(() => {
-    setIsPlayerMinimized(prev => !prev);
-  }, []);
+    const goingToMinimize = !isPlayerMinimized;
+    // If minimizing → exit fullscreen so the layout is visible
+    if (goingToMinimize) {
+      try {
+        if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      } catch (e) {}
+    } else {
+      // Restoring fullscreen
+      try {
+        if (typeof document !== 'undefined' && document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen();
+        }
+      } catch (e) {}
+    }
+    setIsPlayerMinimized(goingToMinimize);
+  }, [isPlayerMinimized]);
 
   // Handle media selection/auto-rotation
   // Build a pool of diverse items for the hero slideshow
@@ -347,8 +376,15 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     [filteredCategories]
   );
 
+  // Browse mode player dimensions
+  const browsePlayerHeight = layout.isMobile
+    ? Math.round(layout.width * 9 / 16)   // 16:9 ratio
+    : layout.isTablet
+    ? Math.round(layout.width * 0.4 * 9 / 16)
+    : Math.round(layout.width * 0.35 * 9 / 16);
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isBrowsing && { flexDirection: 'column' }]}>
       {/* Loading State Overlay */}
       <AnimatePresence>
         {loading && allCategories.length === 0 && (
@@ -393,6 +429,48 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         )
       )}
       
+      {/* ── Browse-while-playing: docked player at top ── */}
+      {isBrowsing && activeVideoUrl && (
+        <View
+          style={{
+            width: '100%',
+            height: browsePlayerHeight,
+            backgroundColor: '#000',
+            borderBottom: '1px solid rgba(255,255,255,0.08)' as any,
+            flexShrink: 0,
+            position: 'relative',
+            zIndex: 50,
+            marginTop: layout.isMobile ? 'env(safe-area-inset-top, 0px)' : 0,
+            marginLeft: layout.isCompact ? 0 : layout.sideRailWidth,
+          }}
+        >
+          {/* Inline player — no fullscreen controls */}
+          <Suspense fallback={<View style={{ height: browsePlayerHeight, backgroundColor: '#000' }} />}>
+            <VideoPlayer
+              key={`browse-${activeVideoUrl}`}
+              url={activeVideoUrl}
+              mediaType={videoType || 'live'}
+              media={playingMedia}
+              nextEpisode={nextEpisode}
+              onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
+              onClose={() => {
+                setActiveVideoUrl(null);
+                setPlayingMedia(null);
+                setIsPlayerMinimized(false);
+                try {
+                  if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+                    document.exitFullscreen().catch(() => {});
+                  }
+                } catch (e) {}
+              }}
+              isMinimized={false}
+              onToggleMinimize={handleToggleMinimize}
+              isBrowseMode={true}
+            />
+          </Suspense>
+        </View>
+      )}
+
       <ScrollView 
         ref={scrollRef}
         style={styles.scrollView}
@@ -497,18 +575,20 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       </ScrollView>
 
       {/* Header Branding - Overlays the ScrollView */}
-      <View
-        style={[
-          styles.header,
-          layout.isCompact && styles.headerCompact,
-          {
-            height: layout.isCompact ? (isSearchMode ? 172 : 118) : 120,
-            paddingTop: layout.topHeaderPadding,
-            paddingLeft: layout.isDesktop ? layout.sideRailWidth : layout.horizontalPadding,
-            paddingRight: layout.horizontalPadding,
-          },
-        ]}
-      >
+      {!isBrowsing && (
+        <View
+          style={[
+            styles.header,
+            layout.isCompact && styles.headerCompact,
+            {
+              height: layout.isCompact ? (isSearchMode ? 172 : 118) : 120,
+              paddingTop: layout.topHeaderPadding,
+              paddingLeft: layout.isDesktop ? layout.sideRailWidth : layout.horizontalPadding,
+              paddingRight: layout.horizontalPadding,
+              pointerEvents: 'none' as any,
+            },
+          ]}
+        >
         <Text
           style={[
             styles.logo,
@@ -520,7 +600,12 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           XANDEFLIX
         </Text>
 
-        <View style={[styles.headerRight, layout.isCompact && styles.headerRightCompact]}>
+        <View
+          style={[
+            styles.headerRight,
+            layout.isCompact && styles.headerRightCompact,
+            { pointerEvents: 'auto' as any },
+          ]}>
           {isSearchMode && (
             <View style={[styles.searchBar, layout.isCompact && styles.searchBarCompact]}>
               <View style={styles.searchIconWrap}>
@@ -619,6 +704,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
         </View>
       </View>
+      )}
 
       {/* Overlays */}
       <AnimatePresence>
@@ -635,8 +721,11 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         )}
       </AnimatePresence>
 
+
+
+      {/* ── Fullscreen player overlay ── */}
       <AnimatePresence>
-        {activeVideoUrl && (
+        {activeVideoUrl && !isBrowsing && (
           <Suspense fallback={null}>
             <VideoPlayer 
               key={activeVideoUrl}
@@ -648,13 +737,14 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               onClose={() => {
                 setActiveVideoUrl(null);
                 setPlayingMedia(null);
+                setIsPlayerMinimized(false);
                 try {
                   if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
                     document.exitFullscreen().catch(() => {});
                   }
                 } catch (e) {}
               }}
-              isMinimized={isPlayerMinimized}
+              isMinimized={false}
               onToggleMinimize={handleToggleMinimize}
             />
           </Suspense>

@@ -15,7 +15,8 @@ export const useResponsiveLayout = () => {
     const horizontalPadding = isMobile ? 16 : isTablet ? 24 : 60;
     const topHeaderPadding = isMobile ? 18 : isTablet ? 26 : 40;
     const sideRailWidth = isCompact ? 0 : 120;
-    const bottomNavigationHeight = isCompact ? 92 : 0;
+    // 72px = 52px button area + 8px safe area padding + 12px extra clearance
+    const bottomNavigationHeight = isCompact ? 72 : 0;
 
     return {
       width,

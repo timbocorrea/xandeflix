@@ -18,6 +18,7 @@ interface VideoPlayerProps {
   isMinimized?: boolean;
   onToggleMinimize?: () => void;
   isPreview?: boolean;
+  isBrowseMode?: boolean;
 }
 
 /**
@@ -43,7 +44,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onPlayNextEpisode,
   isMinimized = false,
   onToggleMinimize,
-  isPreview = false
+  isPreview = false,
+  isBrowseMode = false
 }) => {
   const layout = useResponsiveLayout();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -583,28 +585,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       animate={{ 
         opacity: 1, 
         scale: 1,
-        width: isPreview ? '100%' : (isMinimized ? minimizedWidth : layout.width),
-        height: isPreview ? '100%' : (isMinimized ? minimizedHeight : layout.height),
+        width: isPreview || isBrowseMode ? '100%' : (isMinimized ? minimizedWidth : layout.width),
+        height: isPreview || isBrowseMode ? '100%' : (isMinimized ? minimizedHeight : layout.height),
         borderRadius: isMinimized ? 20 : 0,
       }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-      style={isPreview ? {} : {
+      style={isPreview || isBrowseMode ? {} : {
         top: isMinimized ? 'auto' : 0,
         left: isMinimized ? 'auto' : 0,
         right: isMinimized ? `max(env(safe-area-inset-right, 0px), ${layout.isMobile ? 12 : 24}px)` : 0,
         bottom: isMinimized ? minimizedBottom : 0,
         aspectRatio: isMinimized ? '16 / 9' : 'auto',
       }}
-      className={`${isPreview ? 'absolute inset-0' : 'fixed z-[100]'} bg-black flex items-center justify-center overflow-hidden shadow-2xl ${
+      className={`${isPreview ? 'absolute inset-0' : isBrowseMode ? 'relative w-full h-full' : 'fixed z-[100]'} bg-black flex items-center justify-center overflow-hidden shadow-2xl ${
         isMinimized ? 'border-2 border-white/20' : ''
       } ${
-        isIdle && !isPreview ? 'cursor-none' : ''
+        isIdle && !isPreview && !isBrowseMode ? 'cursor-none' : ''
       }`}
     >
       {!isPreview && (
         <div 
           className={`absolute z-[110] flex flex-wrap justify-end gap-3 transition-opacity duration-500 delay-100 ${
-            isIdle && !isMinimized ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            isIdle && (!isMinimized && !isBrowseMode) ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
         style={{
           top: controlSafeTop,

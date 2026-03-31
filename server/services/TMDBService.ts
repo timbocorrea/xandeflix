@@ -12,16 +12,20 @@ export class TMDBService {
    * Cleans raw IPTV titles by removing common tags, quality markers, and language indicators
    */
   private static cleanTitle(rawTitle: string): string {
+    if (!rawTitle) return '';
     let clean = rawTitle;
 
-    // 1. Remove bracketed/parenthesized tags like |PT|, [4K], (2023)
+    // 1. Remove bracketed/parenthesized tags like |PT|, [4K], (2023), {HEVC}
     clean = clean.replace(/\|[^|]+\|/g, ' '); 
     clean = clean.replace(/\[[^\]]+\]/g, ' ');
     clean = clean.replace(/\([^)]+\)/g, ' ');
+    clean = clean.replace(/\{[^}]+\}/g, ' ');
     
-    // 2. Remove common noise keywords (quality, source, audio, etc)
+    // 2. Remove common quality and technical tags (quality, source, audio, etc)
+    // Adding 'L' and other markers mentioned by user
     const keywords = [
-      'fhd', 'hd', 'uhd', '4k', '8k', 'sd', 'h264', 'h265', 'hevc', 
+      'fhd', 'hd', 'uhd', '4k', '8k', 'sd', 'h264', 'h265', 'hevc', 'l',
+      'ultra hd', '1080p', '720p', '480p', '360p',
       'dublado', 'legendado', 'dub', 'leg', 'dual', 'dual audio',
       'netflix', 'amazon', 'disney+', 'hbo', 'globoplay', 'apple tv',
       'ts', 'tc', 'cam', 'dvdrip', 'brrip', 'web-dl', 'bluray', 'hdtv',
@@ -34,14 +38,15 @@ export class TMDBService {
       clean = clean.replace(regex, ' ');
     });
 
-    // 3. Remove standard season/episode noise if it's there (for better series matching)
+    // 3. Remove symbols and separators that hinder search
+    clean = clean.replace(/[:\-\|\/_.]/g, ' ');
+
+    // 4. Remove standard season/episode noise
     clean = clean.replace(/\bS\d{1,2}E\d{1,2}\b/i, ' '); 
     clean = clean.replace(/\bT\d{1,2}E\d{1,2}\b/i, ' ');
 
-    // 4. Final Cleanup: replace redundant spaces and trim
-    clean = clean.replace(/\s+/g, ' ').trim();
-    
-    return clean;
+    // 5. Final Cleanup: replace redundant spaces and trim
+    return clean.replace(/\s+/g, ' ').trim();
   }
 
   private static cache = new Map<string, any>();

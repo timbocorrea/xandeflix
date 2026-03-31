@@ -1,16 +1,34 @@
 import React from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { motion } from 'motion/react';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface LoadingScreenProps {
   statusMessage?: string;
 }
 
 const LoadingScreen: React.FC<LoadingScreenProps> = ({ statusMessage }) => {
+  const { width, height } = useWindowDimensions();
+  const isMobile = width < 768;
+
+  // Responsive logo: scales from 36px (small phone) to 82px (desktop)
+  const logoSize = Math.min(82, Math.max(36, width * 0.16));
+  const barWidth = Math.min(250, width * 0.6);
+
   return (
-    <View style={styles.container}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: '#050505',
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: '100%',
+        height: '100%',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        zIndex: 1000,
+      }}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ 
@@ -22,11 +40,34 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({ statusMessage }) => {
           repeat: Infinity,
           ease: "easeInOut" 
         }}
-        style={styles.logoContainer}
+        style={{ alignItems: 'center', display: 'flex', flexDirection: 'column' }}
       >
-        <Text style={styles.logoText}>XANDEFLIX</Text>
-        <View style={styles.loaderBarContainer}>
-          <motion.div 
+        <Text
+          style={{
+            fontSize: logoSize,
+            fontWeight: '900',
+            color: '#E50914',
+            fontStyle: 'italic',
+            letterSpacing: -logoSize * 0.06,
+            fontFamily: 'Outfit',
+            textShadow: '0 0 20px rgba(229, 9, 20, 0.5)',
+          } as any}
+        >
+          XANDEFLIX
+        </Text>
+
+        {/* Animated progress bar */}
+        <View
+          style={{
+            width: barWidth,
+            height: 3,
+            backgroundColor: 'rgba(255,255,255,0.1)',
+            borderRadius: 2,
+            marginTop: 20,
+            overflow: 'hidden',
+          }}
+        >
+          <motion.div
             animate={{ 
               width: ["0%", "40%", "80%", "100%"],
               opacity: [1, 1, 1, 0]
@@ -36,61 +77,31 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({ statusMessage }) => {
               repeat: Infinity,
               ease: "circIn" 
             }}
-            style={styles.loaderBar} 
+            style={{
+              height: '100%',
+              backgroundColor: '#E50914',
+              boxShadow: '0 0 10px rgba(229, 9, 20, 0.8)',
+            } as any}
           />
         </View>
       </motion.div>
-      <Text style={styles.loadingMessage}>{statusMessage || 'Carregando sua experiência cinematográfica...'}</Text>
+
+      <Text
+        style={{
+          color: 'rgba(255,255,255,0.45)',
+          marginTop: 28,
+          fontSize: isMobile ? 13 : 15,
+          fontWeight: '500',
+          letterSpacing: 0.8,
+          fontFamily: 'Outfit',
+          textAlign: 'center',
+          paddingHorizontal: 32,
+        }}
+      >
+        {statusMessage || 'Carregando sua experiência cinematográfica...'}
+      </Text>
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#050505',
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 1000,
-  },
-  logoContainer: {
-    alignItems: 'center',
-  },
-  logoText: {
-    fontSize: 82,
-    fontWeight: '900',
-    color: '#E50914',
-    fontStyle: 'italic',
-    letterSpacing: -5,
-    fontFamily: 'Outfit',
-    textShadow: '0 0 20px rgba(229, 9, 20, 0.5)',
-  } as any,
-  loaderBarContainer: {
-    width: 250,
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 2,
-    marginTop: 20,
-    overflow: 'hidden',
-  },
-  loaderBar: {
-    height: '100%',
-    backgroundColor: '#E50914',
-    boxShadow: '0 0 10px rgba(229, 9, 20, 0.8)',
-  } as any,
-  loadingMessage: {
-    color: 'rgba(255,255,255,0.5)',
-    marginTop: 30,
-    fontSize: 16,
-    fontWeight: '500',
-    letterSpacing: 1,
-    fontFamily: 'Outfit',
-  }
-});
 
 export default LoadingScreen;

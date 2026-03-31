@@ -165,21 +165,21 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
                      isPreview={true}
                    />
                 </TouchableHighlight>
-                <View style={styles.previewInfo}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.previewTitle}>{previewMedia.title}</Text>
-                    <Text style={styles.previewDescription}>{previewMedia.description}</Text>
-                  </View>
-                  <TouchableHighlight
-                    onPress={() => onPlayFull(previewMedia)}
-                    underlayColor="#B91C1C"
-                    style={styles.fullScreenBtn}
-                  >
-                    <View style={styles.fullScreenBtnInner}>
-                      <Maximize2 size={18} color="white" />
-                      <Text style={styles.fullScreenText}>TELA CHEIA</Text>
-                    </View>
-                  </TouchableHighlight>
+                {/* Floating info for a cleaner look when borderless */}
+                <View style={styles.previewInfoFloating}>
+                   <View style={{ flex: 1 }}>
+                     <Text style={styles.previewTitleSmall}>{previewMedia.title}</Text>
+                   </View>
+                   <TouchableHighlight
+                     onPress={() => onPlayFull(previewMedia)}
+                     underlayColor="#B91C1C"
+                     style={styles.fullScreenBtnSmall}
+                   >
+                     <View style={styles.fullScreenBtnInner}>
+                       <Maximize2 size={16} color="white" />
+                       <Text style={styles.fullScreenTextSmall}>TELA CHEIA</Text>
+                     </View>
+                   </TouchableHighlight>
                 </View>
               </View>
             </motion.div>
@@ -219,10 +219,10 @@ const styles = StyleSheet.create({
   },
   playerSection: {
     flex: 1,
-    padding: 30,
+    padding: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: '#000',
   },
   columnHeader: {
     padding: 24,
@@ -356,57 +356,21 @@ const styles = StyleSheet.create({
   previewContainer: {
     flex: 1,
     width: '100%',
-    backgroundColor: '#0a0a0a',
-    borderRadius: 24,
+    backgroundColor: '#000',
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
   },
   playerWrapper: {
     width: '100%',
-    aspectRatio: '16/9',
+    flex: 1,
     backgroundColor: '#000',
   },
-  previewInfo: {
-    padding: 30,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 30,
-  },
-  previewTitle: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: 'white',
-    fontFamily: 'Outfit',
-    marginBottom: 12,
-  },
-  previewDescription: {
-    fontSize: 15,
-    color: 'rgba(255,255,255,0.5)',
-    lineHeight: 22,
-    fontFamily: 'Outfit',
-  },
-  fullScreenBtn: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
-  },
-  fullScreenBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  fullScreenText: {
-    color: 'white',
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 1,
-    fontFamily: 'Outfit',
-  },
   playerPlaceholder: {
+    flex: 1,
+    width: '100%',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 20,
+    backgroundColor: '#000',
   },
   placeholderIconContainer: {
     width: 120,
@@ -432,5 +396,44 @@ const styles = StyleSheet.create({
   emptyText: {
     color: 'rgba(255,255,255,0.4)',
     fontSize: 18,
-  }
+  },
+  previewInfoFloating: {
+    position: 'absolute',
+    bottom: 40,
+    left: 40,
+    right: 40,
+    padding: 24,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    backdropFilter: 'blur(10px)',
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  } as any,
+  previewTitleSmall: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: 'white',
+    fontFamily: 'Outfit',
+  },
+  fullScreenBtnSmall: {
+    backgroundColor: '#E50914',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  fullScreenTextSmall: {
+    color: 'white',
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 1,
+    fontFamily: 'Outfit',
+  },
+  fullScreenBtnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
 });
