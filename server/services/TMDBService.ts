@@ -52,21 +52,26 @@ export class TMDBService {
   public static async searchMedia(rawTitle: string, type: 'movie' | 'series') {
     if (!this.API_KEY || this.API_KEY === 'sua_chave_da_api_v3_aqui') {
       // Discreetly log if the API key is missing or still a placeholder
-      if (process.env.NODE_ENV === 'development' && !this.API_KEY) {
-        console.warn('[TMDB] TMDB_API_KEY is not configured.');
+      if (process.env.NODE_ENV === 'development' || !this.API_KEY) {
+        console.warn('[TMDB-DEBUG] TMDB_API_KEY is not configured or using default placeholder.');
       }
       return null;
     }
 
     const title = this.cleanTitle(rawTitle);
-    if (!title || title.length < 2) return null;
+    if (!title || title.length < 2) {
+      console.log(`[TMDB-DEBUG] Title too short after cleaning: "${title}" (Original: "${rawTitle}")`);
+      return null;
+    }
 
     const cacheKey = `${type}_${title}`;
     if (this.cache.has(cacheKey)) {
+      console.log(`[TMDB-DEBUG] Cache Hit: "${title}"`);
       return this.cache.get(cacheKey);
     }
 
     const endpoint = type === 'movie' ? '/search/movie' : '/search/tv';
+    console.log(`[TMDB-DEBUG] Requesting TMDB metadata for: "${title}" via ${endpoint}`);
     
     try {
       const response = await axios.get(`${this.BASE_URL}${endpoint}`, {
@@ -81,6 +86,7 @@ export class TMDBService {
 
       const result = response.data.results?.[0];
       if (!result) {
+         console.log(`[TMDB-DEBUG] No results found on TMDB for: "${title}"`);
          this.cache.set(cacheKey, null);
          return null;
       }
@@ -99,12 +105,13 @@ export class TMDBService {
           this.cache.delete(firstKey as string);
       }
       this.cache.set(cacheKey, enrichedResult);
+      console.log(`[TMDB-DEBUG] Successfully enriched metadata for: "${title}"`);
       return enrichedResult;
     } catch (error: any) {
       if (this.cache.size > 1000) this.cache.clear();
       this.cache.set(cacheKey, null); // cache negative results to protect rate limits
       // Log errors discretely
-      console.log(`[TMDB] Could not fetch metadata for "${title}": ${error.message}`);
+      console.error(`[TMDB-DEBUG] Error fetching metadata for "${title}":`, error.message, error.response?.data);
       return null;
     }
   }

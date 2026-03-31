@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
 import { supabase } from '../lib/supabase.js';
@@ -11,6 +12,7 @@ export interface UserRecord {
   isBlocked: boolean;
   role?: string;
   lastAccess?: string;
+  hiddenCategories?: string[];
 }
 
 interface SupabaseUserRow {
@@ -23,16 +25,44 @@ interface SupabaseUserRow {
   role?: string | null;
   last_access?: string | null;
   created_at?: string | null;
+  hidden_categories?: string[] | null;
 }
 
 const USERS_FILE = path.join(process.cwd(), 'users.json');
+const COMPILED_SERVER_MARKER = `${path.sep}dist${path.sep}server${path.sep}`;
+const IS_COMPILED_SERVER_RUNTIME = (process.argv[1] || '').includes(COMPILED_SERVER_MARKER);
 
 export class AdminService {
   private static users: UserRecord[] = [];
   private static initialized = false;
 
+  private static isHash(password: string): boolean {
+    return password.startsWith('$2a$') || password.startsWith('$2b$') || password.startsWith('$2y$');
+  }
+
+  private static hashPassword(password: string): string {
+    return this.isHash(password) ? password : bcrypt.hashSync(password, 10);
+  }
+
+  private static async verifyPassword(plain: string, stored: string): Promise<boolean> {
+    if (!stored) return false;
+    if (this.isHash(stored)) {
+      try {
+        return await bcrypt.compare(plain, stored);
+      } catch (e) {
+        return false;
+      }
+    }
+    // Fallback for legacy plain text passwords during transition
+    return plain === stored;
+  }
+
+  private static isProductionRuntime(): boolean {
+    return process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL) || IS_COMPILED_SERVER_RUNTIME;
+  }
+
   private static canFallbackToLocal(): boolean {
-    return process.env.NODE_ENV !== 'production' && !process.env.VERCEL;
+    return !this.isProductionRuntime();
   }
 
   private static createPersistenceError(action: string, cause?: unknown): Error {
@@ -62,6 +92,7 @@ export class AdminService {
       isBlocked: user.is_blocked,
       role: user.role || 'user',
       lastAccess: user.last_access || undefined,
+      hiddenCategories: user.hidden_categories || [],
     };
   }
 
@@ -91,6 +122,24 @@ export class AdminService {
     } catch (err) {
       console.error('[ADMIN] Error saving users:', err);
     }
+  }
+
+  private static migrateLegacyLocalPasswords(): number {
+    let migratedCount = 0;
+
+    this.users = this.users.map((user) => {
+      if (!user.password || this.isHash(user.password)) {
+        return user;
+      }
+
+      migratedCount += 1;
+      return {
+        ...user,
+        password: this.hashPassword(user.password),
+      };
+    });
+
+    return migratedCount;
   }
 
   private static mergeUsers(primaryUsers: UserRecord[], secondaryUsers: UserRecord[]): UserRecord[] {
@@ -194,12 +243,56 @@ export class AdminService {
     }
 
     this.loadUsers();
+    const migratedLocalPasswords = this.migrateLegacyLocalPasswords();
+    if (migratedLocalPasswords > 0) {
+      this.saveUsers();
+      console.log(`[ADMIN] Migrated ${migratedLocalPasswords} local user password(s) to bcrypt.`);
+    }
     this.initialized = true;
 
     // Fire-and-forget sync: push local-only users to Supabase
     this.syncLocalUsersToSupabase().catch((err) => {
       console.warn('[ADMIN] Background sync to Supabase failed:', err);
     });
+
+    this.migrateLegacySupabasePasswords().catch((err) => {
+      console.warn('[ADMIN] Background Supabase password migration failed:', err);
+    });
+  }
+
+  private static async migrateLegacySupabasePasswords(): Promise<void> {
+    if (!supabase) {
+      console.log('[SYNC] Supabase not available, skipping password migration.');
+      return;
+    }
+
+    try {
+      const supabaseUsers = await this.listSupabaseUsers();
+      const legacyUsers = supabaseUsers.filter((user) => user.password && !this.isHash(user.password));
+
+      if (legacyUsers.length === 0) {
+        console.log('[SYNC] No legacy Supabase passwords to migrate.');
+        return;
+      }
+
+      console.log(`[SYNC] Migrating ${legacyUsers.length} legacy Supabase password(s) to bcrypt...`);
+
+      for (const user of legacyUsers) {
+        const { error } = await supabase
+          .from('xandeflix_users')
+          .update({ password: this.hashPassword(user.password || '') })
+          .eq('id', user.id);
+
+        if (error) {
+          console.warn(`[SYNC] Error migrating password for "${user.username}":`, error.message);
+          continue;
+        }
+
+        console.log(`[SYNC] Migrated Supabase password for "${user.username}".`);
+      }
+    } catch (err: any) {
+      console.warn('[SYNC] Unable to migrate legacy Supabase passwords:', err.message || err);
+    }
   }
 
   /**
@@ -249,16 +342,25 @@ export class AdminService {
             console.log(`[SYNC] Updated playlist URL in Supabase for "${localUser.username}".`);
           }
 
+          if (localUser.password && (!mapped.password || !this.isHash(mapped.password))) {
+            await supabase
+              .from('xandeflix_users')
+              .update({ password: this.hashPassword(localUser.password) })
+              .eq('id', existing.id);
+            console.log(`[SYNC] Updated password hash in Supabase for "${localUser.username}".`);
+          }
+
           localUser.id = existing.id;
           console.log(`[SYNC] Linked local user "${localUser.username}" (${oldId}) → Supabase (${existing.id})`);
         } else {
           // User doesn't exist in Supabase — insert
+          const passwordToSync = localUser.password || '123';
           const { data: inserted, error: insertError } = await supabase
             .from('xandeflix_users')
             .insert({
               name: localUser.name,
               username: localUser.username,
-              password: localUser.password || '123',
+              password: this.hashPassword(passwordToSync),
               playlist_url: localUser.playlistUrl,
               is_blocked: localUser.isBlocked,
               role: localUser.role || 'user',
@@ -364,9 +466,50 @@ export class AdminService {
 
     this.users[userIndex].isBlocked = blocked;
     this.saveUsers();
-    console.log(`[ADMIN] User status updated locally for ${userId}: ${blocked ? 'BLOCKED' : 'ACTIVE'}`);
+    console.log(`[ADMIN] Local user status updated for ${userId}: ${blocked ? 'BLOCKED' : 'ACTIVE'}`);
+
     return true;
   }
+
+  public static async updateHiddenCategories(userId: string, categories: string[]): Promise<boolean> {
+    this.initialize();
+
+    if (this.isUuid(userId)) {
+      try {
+        if (!supabase) throw new Error('Supabase indisponível');
+
+        // We try updating the column. If it fails due to missing column, we catch it.
+        const { data, error } = await supabase
+          .from('xandeflix_users')
+          .update({ hidden_categories: categories })
+          .eq('id', userId)
+          .select('*')
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (data) {
+          this.syncLocalUser(userId, { hiddenCategories: categories });
+          console.log(`[ADMIN] User hidden categories updated in Supabase for ${userId}. Count: ${categories.length}`);
+          return true;
+        }
+      } catch (err: any) {
+        console.error(`[ADMIN] Warning: Could not update hidden_categories in Supabase for ${userId}. (Means column doesn't exist):`, err.message);
+        if (!this.canFallbackToLocal()) throw err;
+      }
+    }
+
+    const localIndex = this.users.findIndex((u) => u.id === userId);
+    if (localIndex !== -1) {
+      this.users[localIndex].hiddenCategories = categories;
+      this.saveUsers();
+      console.log(`[ADMIN] User hidden categories updated locally for ${userId}`);
+      return true;
+    }
+
+    return false;
+  }
+
 
   public static async updateUser(userId: string, data: Partial<UserRecord>): Promise<boolean> {
     this.initialize();
@@ -384,7 +527,7 @@ export class AdminService {
           .update({
             ...(data.name !== undefined ? { name: data.name } : {}),
             ...(data.username !== undefined ? { username: data.username } : {}),
-            ...(data.password !== undefined ? { password: data.password } : {}),
+            ...(data.password !== undefined ? { password: this.hashPassword(data.password) } : {}),
             ...(trimmedPlaylistUrl !== undefined ? { playlist_url: trimmedPlaylistUrl } : {}),
             ...(data.isBlocked !== undefined ? { is_blocked: data.isBlocked } : {}),
           })
@@ -397,7 +540,11 @@ export class AdminService {
         }
 
         if (updatedUser) {
-          this.syncLocalUser(userId, { ...data, playlistUrl: trimmedPlaylistUrl });
+          this.syncLocalUser(userId, { 
+            ...data, 
+            playlistUrl: trimmedPlaylistUrl,
+            password: data.password ? this.hashPassword(data.password) : undefined 
+          });
           console.log(`[ADMIN] User updated in Supabase for ${userId}`);
           return true;
         }
@@ -422,6 +569,7 @@ export class AdminService {
     this.users[userIndex] = {
       ...this.users[userIndex],
       ...data,
+      password: data.password ? this.hashPassword(data.password) : this.users[userIndex].password,
       playlistUrl: trimmedPlaylistUrl ?? this.users[userIndex].playlistUrl,
     };
     this.saveUsers();
@@ -437,7 +585,7 @@ export class AdminService {
       id: `usr_${Math.random().toString(36).substring(2, 9)}`,
       name,
       username: (username || name).trim(),
-      password: password || '123',
+      password: this.hashPassword(password || '123'),
       playlistUrl: trimmedPlaylistUrl,
       isBlocked: false,
       role: 'user',
@@ -542,11 +690,13 @@ export class AdminService {
     const adminUsername = this.normalizeIdentifier(process.env.ADMIN_USERNAME || 'admin');
     const adminPasswords = [process.env.ADMIN_PASSWORD, process.env.ADMIN_SECRET_KEY].filter(Boolean);
 
+    // Admin via env variables
     if (normalizedIdentifier === adminUsername && token && adminPasswords.includes(token)) {
       console.log('[AUTH] Admin authenticated successfully via environment credentials');
       return { type: 'admin' };
     }
 
+    // Try Supabase first
     try {
       if (!supabase) {
         throw new Error('Supabase indisponível');
@@ -556,45 +706,47 @@ export class AdminService {
         .from('xandeflix_users')
         .select('*')
         .ilike('username', normalizedIdentifier)
-        .eq('password', token || '')
         .maybeSingle();
 
-      if (error) {
-        throw error;
-      }
+      if (!error && user && !user.is_blocked) {
+        const isMatch = await this.verifyPassword(token || '', user.password || '');
+        if (isMatch) {
+          const now = new Date().toISOString();
 
-      if (user && !user.is_blocked) {
-        const now = new Date().toISOString();
+          await supabase
+            .from('xandeflix_users')
+            .update({ last_access: now })
+            .eq('id', user.id);
 
-        await supabase
-          .from('xandeflix_users')
-          .update({ last_access: now })
-          .eq('id', user.id);
+          const mappedUser = this.mapSupabaseUser({
+            ...(user as SupabaseUserRow),
+            last_access: now,
+          });
 
-        const mappedUser = this.mapSupabaseUser({
-          ...(user as SupabaseUserRow),
-          last_access: now,
-        });
-
-        console.log(`[AUTH] User authenticated via Supabase: ${mappedUser.name} (${mappedUser.id}) as ${mappedUser.role || 'user'}`);
-        return {
-          type: mappedUser.role === 'admin' ? 'admin' : 'user',
-          data: mappedUser,
-        };
+          console.log(`[AUTH] User authenticated via Supabase: ${mappedUser.name} (${mappedUser.id})`);
+          return {
+            type: mappedUser.role === 'admin' ? 'admin' : 'user',
+            data: mappedUser,
+          };
+        }
       }
     } catch (err: any) {
       console.error('[AUTH] Supabase authentication error:', err.message);
     }
 
-    const localUser = this.findLocalUserByIdentifier(identifier, token);
-    if (localUser && !localUser.isBlocked) {
-      localUser.lastAccess = new Date().toISOString();
-      this.saveUsers();
-      console.log(`[AUTH] User authenticated via Local JSON: ${localUser.name} (${localUser.id})`);
-      return {
-        type: localUser.role === 'admin' ? 'admin' : 'user',
-        data: { ...localUser },
-      };
+    // Try Local fallback
+    const localUserMatch = this.users.find(u => this.normalizeIdentifier(u.username) === normalizedIdentifier);
+    if (localUserMatch && !localUserMatch.isBlocked) {
+      const isMatch = await this.verifyPassword(token || '', localUserMatch.password || '');
+      if (isMatch) {
+        localUserMatch.lastAccess = new Date().toISOString();
+        this.saveUsers();
+        console.log(`[AUTH] User authenticated via Local JSON: ${localUserMatch.name}`);
+        return {
+          type: localUserMatch.role === 'admin' ? 'admin' : 'user',
+          data: { ...localUserMatch },
+        };
+      }
     }
 
     console.warn(`[AUTH] Failed login attempt for: ${identifier}`);

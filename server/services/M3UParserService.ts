@@ -1,6 +1,12 @@
 import { Category, Media, MediaType } from "../../src/types/index.js";
 
 export class M3UParserService {
+  private static extractAttributeValue(attributes: string, attributeName: string): string | undefined {
+    const pattern = new RegExp(`${attributeName}=(?:"([^"]*)"|'([^']*)'|([^\\s]+))`, 'i');
+    const match = attributes.match(pattern);
+    return match?.[1] || match?.[2] || match?.[3];
+  }
+
   private static normalizeArtworkUrl(url: string, fallbackSeed: string): string {
     const trimmed = url.trim();
 
@@ -23,14 +29,13 @@ export class M3UParserService {
    * Parses basic EXTINF attributes from a line
    */
   private static parseAttributes(attributes: string, name: string): Partial<Media> {
-    const logoMatch = attributes.match(/tvg-logo="([^"]+)"/);
-    const categoryMatch = attributes.match(/group-title="([^"]+)"/);
-    const tvgIdMatch = attributes.match(/tvg-id="([^"]+)"/);
-    const tvgNameMatch = attributes.match(/tvg-name="([^"]+)"/);
-    
-    const category = categoryMatch ? categoryMatch[1] : 'Geral';
+    const logo = this.extractAttributeValue(attributes, 'tvg-logo');
+    const categoryValue = this.extractAttributeValue(attributes, 'group-title');
+    const tvgId = this.extractAttributeValue(attributes, 'tvg-id');
+    const tvgName = this.extractAttributeValue(attributes, 'tvg-name');
+
+    const category = categoryValue || 'Geral';
     const catLower = category.toLowerCase();
-    const nameLower = name.toLowerCase();
 
     // Default to Live
     let type: MediaType = MediaType.LIVE;
@@ -65,7 +70,7 @@ export class M3UParserService {
     }
 
     let thumbnail = this.normalizeArtworkUrl(
-      logoMatch ? logoMatch[1] : '',
+      logo || '',
       name
     );
     
@@ -86,8 +91,8 @@ export class M3UParserService {
       rating: '12+',
       duration: type === MediaType.LIVE ? 'Ao Vivo' : 'VOD',
       // EPG Metadata
-      tvgId: tvgIdMatch ? tvgIdMatch[1] : undefined,
-      tvgName: tvgNameMatch ? tvgNameMatch[1] : undefined
+      tvgId: tvgId || undefined,
+      tvgName: tvgName || undefined
     } as any;
   }
 
@@ -97,9 +102,21 @@ export class M3UParserService {
   private static normalizeCategoryTitle(title: string): string {
     let normalized = title.trim();
     
-    // Example: remove standard prefixes/suffixes
-    normalized = normalized.replace(/^BR[\s-]*\|?[\s-]*/i, '');
-    normalized = normalized.replace(/^PT[\s-]*\|?[\s-]*/i, '');
+    // 1. Remove prefixos de país comuns (ex: "BR |", "PT -", "US")
+    normalized = normalized.replace(/^(?:BR|PT|US|UK|GLOBAL)[\s-]*\|?[\s-]*/i, '');
+    
+    // 2. Agrupamento de variações de 4K
+    if (/4K/i.test(normalized)) {
+      if (/FILME/i.test(normalized)) return 'Filmes 4K';
+      if (/S[EÉ]RIE/i.test(normalized)) return 'Séries 4K';
+    }
+    
+    // 3. Padronização de nomes comuns para evitar duplicatas por causa de plurais ou acentos
+    if (/^FILMES/i.test(normalized)) return 'Filmes';
+    if (/^S[EÉ]RIES/i.test(normalized)) return 'Séries';
+    if (/^ANIMES/i.test(normalized)) return 'Animes';
+    if (/^DESENHOS|KIDS|INFANTIL/i.test(normalized)) return 'Infantil';
+    if (/^DOCUMENT[AÁ]RIOS/i.test(normalized)) return 'Documentários';
     
     return normalized;
   }
@@ -117,9 +134,20 @@ export class M3UParserService {
       if (!line) continue;
 
       if (line.toUpperCase().startsWith('#EXTINF')) {
-        const commaIndex = line.indexOf(',');
         let name = 'Canal Sem Nome';
         let attributes = '';
+        
+        let inQuotes = false;
+        let commaIndex = -1;
+        
+        for (let i = 0; i < line.length; i++) {
+          if (line[i] === '"' || line[i] === "'") {
+            inQuotes = !inQuotes;
+          } else if (line[i] === ',' && !inQuotes) {
+            commaIndex = i;
+            break;
+          }
+        }
         
         if (commaIndex !== -1) {
           name = line.substring(commaIndex + 1).trim();
@@ -134,7 +162,7 @@ export class M3UParserService {
           }
           
           if (attrStart !== -1 && attrStart < commaIndex) {
-            attributes = line.substring(attrStart, commaIndex).trim();
+             attributes = line.substring(attrStart, commaIndex).trim();
           }
         } else {
           const firstColon = line.indexOf(':');
@@ -279,18 +307,24 @@ export class M3UParserService {
             baseName = item.title.replace(/[|\[\]\(\)\-]/g, '').replace(/\s{2,}/g, ' ').trim();
          }
 
-         const channelKey = `${item.category}_${baseName.toLowerCase()}`;
+         const normalizedCategory = this.normalizeCategoryTitle(item.category);
+         const channelIdentity = (item.tvgId || baseName).trim().toLowerCase();
+         const canonicalTitle = item.tvgName?.trim() || baseName || item.title;
+         const channelKey = `${normalizedCategory}_${channelIdentity}`;
          
          if (!liveGroupedItems.has(channelKey)) {
             // First time seeing this channel, add the qualities array
             item.qualities = [{ name: quality, url: item.videoUrl }];
-            item.title = baseName || item.title; // Update main title to clean version
+            item.category = normalizedCategory;
+            item.title = canonicalTitle; // Keep EPG-aware title when available
             liveGroupedItems.set(channelKey, item);
             mergedItems.push(item);
          } else {
             // Already saw this channel, append the new URL to its qualities
             const existing = liveGroupedItems.get(channelKey)!;
             existing.qualities = existing.qualities || [];
+            if (!existing.tvgId && item.tvgId) existing.tvgId = item.tvgId;
+            if (!existing.tvgName && item.tvgName) existing.tvgName = item.tvgName;
             
             // Avoid exact URL duplicates
             if (!existing.qualities.some(q => q.url === item.videoUrl)) {
@@ -321,7 +355,7 @@ export class M3UParserService {
     });
 
     // 2. Second Pass: Group by category with normalização
-    const categoriesMap: { [key: string]: Category } = {};
+    const categoriesMap: { [key: string]: Category & { _typeCounts?: any } } = {};
     mergedItems.forEach(item => {
       const normalizedTitle = this.normalizeCategoryTitle(item.category);
       const categoryKey = normalizedTitle.toUpperCase();
@@ -331,18 +365,53 @@ export class M3UParserService {
           id: normalizedTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
           title: normalizedTitle,
           type: item.type,
-          items: []
-        };
+          items: [],
+          _typeCounts: { [MediaType.LIVE]: 0, [MediaType.MOVIE]: 0, [MediaType.SERIES]: 0 }
+        } as any;
       }
       
-      const currentCat = categoriesMap[categoryKey];
+      const currentCat = categoriesMap[categoryKey] as any;
       if (currentCat.items.length < 500) {
         currentCat.items.push(item);
-        
-        // Refine category type based on content
-        if (item.type === MediaType.MOVIE) currentCat.type = MediaType.MOVIE;
-        else if (item.type === MediaType.SERIES) currentCat.type = MediaType.SERIES;
+        if (currentCat._typeCounts[item.type] !== undefined) {
+           currentCat._typeCounts[item.type]++;
+        }
       }
+    });
+
+    // Determine category type by majority vote to prevent a single misclassified item from taking over
+    Object.values(categoriesMap).forEach((cat: any) => {
+      const counts = cat._typeCounts;
+      let dominantType = MediaType.LIVE;
+      
+      if (counts[MediaType.SERIES] > counts[MediaType.LIVE] && counts[MediaType.SERIES] >= counts[MediaType.MOVIE]) {
+        dominantType = MediaType.SERIES;
+      } else if (counts[MediaType.MOVIE] > counts[MediaType.LIVE] && counts[MediaType.MOVIE] >= counts[MediaType.SERIES]) {
+        dominantType = MediaType.MOVIE;
+      }
+      
+      // Override if the category title explicitly gives it away
+      const titleUpper = cat.title.toUpperCase();
+      if (titleUpper.includes('SÉRIE') || titleUpper.includes('SERIE') || titleUpper.includes('NOVELA') || titleUpper.includes('ANIME')) {
+        dominantType = MediaType.SERIES;
+      } else if (titleUpper.includes('FILME') || titleUpper.includes('VOD') || titleUpper.includes('CINEMA') || titleUpper.includes('LANCAMENTO')) {
+        dominantType = MediaType.MOVIE;
+      } else if (titleUpper.includes('AO VIVO') || titleUpper.includes('TV ') || titleUpper.includes('CANAIS')) {
+        dominantType = MediaType.LIVE;
+      }
+      
+      cat.type = dominantType;
+      
+      // Force all items in this category to match the category's dominant type, 
+      // preventing individual VODs from breaking the player's behavior in Live TV categories
+      cat.items.forEach((item: Media) => {
+         // Exception: don't convert a structured SERIES with seasons into a MOVIE
+         if (!(item.type === MediaType.SERIES && item.seasons && item.seasons.length > 0)) {
+            item.type = dominantType;
+         }
+      });
+      
+      delete cat._typeCounts;
     });
 
     // Convert map to array and sort categories by content type priority

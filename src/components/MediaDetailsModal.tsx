@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableHighlight, Image, ImageBackground, ScrollView, FlatList } from 'react-native';
 import { motion } from 'motion/react';
-import { Play, ArrowLeft, Star, Loader2, ListPlus, Share2 } from 'lucide-react';
+import { Play, ArrowLeft, Star, Loader2, Heart, Share2 } from 'lucide-react';
 import { Media } from '../types';
 import { useTMDB } from '../hooks/useTMDB';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
@@ -37,7 +37,10 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
 
   const allCategories = useStore(state => state.allCategories);
   const playbackProgress = useStore(state => state.playbackProgress);
+  const favorites = useStore(state => state.favorites);
+  const toggleFavorite = useStore(state => state.toggleFavorite);
   const { data: tmdbData, loading: tmdbLoading } = useTMDB(media.title, media.type);
+  const isFavorite = favorites.includes(media.id);
 
   const relatedCategory = useMemo(() => {
     // Busca a categoria que contém o conteúdo atual
@@ -227,11 +230,13 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
                 )}
 
                 <TouchableHighlight
-                  onPress={() => {}}
+                  onPress={() => toggleFavorite(media.id)}
                   style={styles.circleBtn}
                   underlayColor="rgba(255,255,255,0.15)"
                 >
-                  <View style={styles.iconWrap}><ListPlus size={22} color="white" /></View>
+                  <View style={styles.iconWrap}>
+                    <Heart size={22} color={isFavorite ? '#E50914' : 'white'} fill={isFavorite ? '#E50914' : 'transparent'} />
+                  </View>
                 </TouchableHighlight>
 
                 <TouchableHighlight

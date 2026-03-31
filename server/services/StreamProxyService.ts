@@ -46,6 +46,27 @@ export class StreamProxyService {
       // Forward status code
       res.status(response.status);
 
+      // Security: Validate Content-Type to prevent general proxy abuse
+      const contentType = (response.headers['content-type'] || '').toLowerCase();
+      const isAllowed = 
+        contentType.startsWith('video/') || 
+        contentType.startsWith('audio/') || 
+        contentType.includes('mpeg') ||
+        contentType.includes('mpegts') ||
+        contentType.includes('mp2t') ||
+        contentType.includes('x-mpegurl') || 
+        contentType.includes('vnd.apple.mpegurl') ||
+        contentType.includes('octet-stream') || // Some older IPTV providers use octet-stream for .ts
+        streamUrl.toLowerCase().includes('.ts') ||
+        streamUrl.toLowerCase().includes('.m3u8');
+
+      if (!isAllowed && response.status === 200) {
+        console.warn(`[SECURITY] Blocked non-media content-type: ${contentType} for URL: ${streamUrl}`);
+        if (response.data && response.data.destroy) response.data.destroy();
+        res.status(403).send('Forbidden: This proxy only allows media streams.');
+        return;
+      }
+
       // Forward essential headers
       const headersToForward = [
         'content-type', 'content-length', 'content-range', 'accept-ranges', 

@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import HomeScreen from './screens/HomeScreen';
-import { AdminPanel } from './screens/AdminPanel';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { LoginScreen } from './screens/LoginScreen';
 import { useStore } from './store/useStore';
+
+const HomeScreen = lazy(() => import('./screens/HomeScreen'));
+const AdminPanel = lazy(() =>
+  import('./screens/AdminPanel').then((module) => ({ default: module.AdminPanel })),
+);
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const isAdminMode = useStore((state) => state.isAdminMode);
   const setIsAdminMode = useStore((state) => state.setIsAdminMode);
+  const hydrateProfileState = useStore((state) => state.hydrateProfileState);
+  const clearSessionState = useStore((state) => state.clearSessionState);
 
   useEffect(() => {
     let isMounted = true;
@@ -21,11 +26,13 @@ export default function App() {
       localStorage.removeItem('xandeflix_auth_role');
       localStorage.removeItem('xandeflix_admin_mode');
       setIsAdminMode(false);
+      clearSessionState();
     };
 
     const restoreSession = async () => {
       const savedToken = localStorage.getItem('xandeflix_auth_token');
       if (!savedToken) {
+        clearSessionState();
         if (isMounted) {
           setIsAuthenticated(false);
           setIsReady(true);
@@ -50,7 +57,16 @@ export default function App() {
 
         if (role === 'user' && session.data) {
           if (session.data.playlistUrl) localStorage.setItem('xandeflix_playlist_url', session.data.playlistUrl);
+          else localStorage.removeItem('xandeflix_playlist_url');
+
           if (session.data.id) localStorage.setItem('xandeflix_user_id', session.data.id);
+          else localStorage.removeItem('xandeflix_user_id');
+
+          hydrateProfileState(session.data.id);
+        } else {
+          localStorage.removeItem('xandeflix_playlist_url');
+          localStorage.removeItem('xandeflix_user_id');
+          clearSessionState();
         }
 
         if (isMounted) {
@@ -73,15 +89,27 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [clearSessionState, hydrateProfileState, setIsAdminMode]);
 
   const handleLoginSuccess = (playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => {
     if (playlistUrl) localStorage.setItem('xandeflix_playlist_url', playlistUrl);
+    else localStorage.removeItem('xandeflix_playlist_url');
+
     if (userId) localStorage.setItem('xandeflix_user_id', userId);
+    else localStorage.removeItem('xandeflix_user_id');
+
     if (authToken) localStorage.setItem('xandeflix_auth_token', authToken);
     if (role) {
       localStorage.setItem('xandeflix_auth_role', role);
       setIsAdminMode(role === 'admin');
+    }
+
+    if (role === 'user') {
+      hydrateProfileState(userId);
+    } else {
+      localStorage.removeItem('xandeflix_playlist_url');
+      localStorage.removeItem('xandeflix_user_id');
+      clearSessionState();
     }
     
     localStorage.setItem('xandeflix_session', 'active');
@@ -96,6 +124,7 @@ export default function App() {
     localStorage.removeItem('xandeflix_auth_role');
     localStorage.removeItem('xandeflix_admin_mode');
     setIsAdminMode(false);
+    clearSessionState();
     setIsAuthenticated(false);
   };
 
@@ -113,13 +142,15 @@ export default function App() {
 
   return (
     <div className="w-full h-full bg-[#050505]">
-      {!isAuthenticated ? (
-        <LoginScreen onLoginSuccess={handleLoginSuccess} />
-      ) : isAdminMode ? (
-        <AdminPanel onExitAdmin={handleExitAdmin} />
-      ) : (
-        <HomeScreen onLogout={handleLogout} />
-      )}
+      <Suspense fallback={<div className="w-full h-full bg-[#050505]" />}>
+        {!isAuthenticated ? (
+          <LoginScreen onLoginSuccess={handleLoginSuccess} />
+        ) : isAdminMode ? (
+          <AdminPanel onExitAdmin={handleExitAdmin} />
+        ) : (
+          <HomeScreen onLogout={handleLogout} />
+        )}
+      </Suspense>
     </div>
   );
 }

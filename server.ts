@@ -2,8 +2,10 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import axios from 'axios';
+import axiosRetry from 'axios-retry';
 import cors from 'cors';
 import compression from 'compression';
+import { rateLimit } from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 
 // Import Services
@@ -20,20 +22,54 @@ import { adminAuthMiddleware } from './server/middleware/adminAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const COMPILED_SERVER_MARKER = `${path.sep}dist${path.sep}server${path.sep}`;
+const isCompiledServerRuntime = __filename.includes(COMPILED_SERVER_MARKER);
+const isProductionRuntime =
+  process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL) || isCompiledServerRuntime;
 
 // Debug environment
 console.log(`[CONFIG] ALLOW_ALL_DOMAINS: ${process.env.ALLOW_ALL_DOMAINS}`);
-console.log(`[CONFIG] NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
-console.log(`[SECURITY] Mode: ${process.env.NODE_ENV === 'production' && process.env.ALLOW_ALL_DOMAINS !== 'true' ? 'STRICT' : 'BYPASS'}`);
+console.log(`[CONFIG] NODE_ENV: ${process.env.NODE_ENV || (isProductionRuntime ? 'production' : 'development')}`);
+console.log(`[SECURITY] Mode: ${isProductionRuntime && process.env.ALLOW_ALL_DOMAINS !== 'true' ? 'STRICT' : 'BYPASS'}`);
 
 /**
  * Global State & Cache Configuration
  */
 const authorizedDomains = new Set<string>(['dnsd1.space']);
-if (process.env.NODE_ENV !== 'production' || process.env.ALLOW_ALL_DOMAINS === 'true') {
+if (!isProductionRuntime || process.env.ALLOW_ALL_DOMAINS === 'true') {
   authorizedDomains.add('localhost');
   authorizedDomains.add('127.0.0.1');
 }
+
+const PLAYLIST_RETRY_ATTEMPTS = 3;
+const PLAYLIST_RETRY_BACKOFF_MS = 2000;
+const playlistHttpClient = axios.create({
+  timeout: 45000,
+  responseType: 'text',
+  headers: {
+    'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+    'Accept': '*/*',
+    'Accept-Encoding': 'gzip, deflate, br',
+  },
+  maxRedirects: 5,
+});
+
+axiosRetry(playlistHttpClient, {
+  retries: PLAYLIST_RETRY_ATTEMPTS,
+  shouldResetTimeout: true,
+  retryCondition: (error) => {
+    const status = error.response?.status;
+    return error.code === 'ECONNABORTED' || !status || status >= 500;
+  },
+  retryDelay: (retryCount, error) => {
+    const delay = PLAYLIST_RETRY_BACKOFF_MS * 2 ** (retryCount - 1);
+    const targetUrl = error.config?.url || 'unknown-url';
+    console.log(
+      `[RETRY] Playlist fetch failed for ${targetUrl.substring(0, 40)}... Retrying in ${delay}ms. (${PLAYLIST_RETRY_ATTEMPTS - retryCount} left)`,
+    );
+    return delay;
+  },
+});
 
 // Seed whitelist from environment (additional domains)
 if (process.env.AUTHORIZED_DOMAINS) {
@@ -47,20 +83,6 @@ if (process.env.AUTHORIZED_DOMAINS) {
 }
 const playlistCache = new CacheManager<any>(30); // 30 minutes cache
 const pendingRequests = new Map<string, Promise<any>>();
-
-// Axios helper with retry logic
-async function fetchWithRetry(url: string, options: any, retries = 3, backoff = 1000) {
-  try {
-    return await axios.get(url, options);
-  } catch (error: any) {
-    if (retries > 0 && (!error.response || error.response.status >= 500)) {
-      console.log(`[RETRY] Fetch failed for ${url.substring(0, 40)}... Retrying in ${backoff}ms. (${retries} left)`);
-      await new Promise(resolve => setTimeout(resolve, backoff));
-      return fetchWithRetry(url, options, retries - 1, backoff * 2);
-    }
-    throw error;
-  }
-}
 
 function getRequestAuthToken(req: express.Request): string | undefined {
   const token = req.headers['x-auth-token'] || req.headers.authorization?.replace(/^Bearer\s+/i, '');
@@ -130,6 +152,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Apply rate limiting to all API routes
+// We use a relatively high limit (2000) because browsing a large IPTV catalog 
+// triggers many metadata/TMDB lookups from the UI.
+const apiLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 minutes
+	max: 2000, 
+	standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+	legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  message: { error: 'Too many requests, please try again later.' }
+});
+app.use('/api', apiLimiter);
+
 // Rota de Teste (Ping)
 app.get('/api/ping', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
@@ -154,6 +188,7 @@ app.use(securityHeadersMiddleware);
 app.get('/api/playlist', async (req, res) => {
   const session = AuthSessionService.getSession(getRequestAuthToken(req));
   let playlistUrl = '';
+  let hiddenCategories: string[] = [];
   console.log(`[API] Playlist request. Session: ${JSON.stringify(session)}`);
   
   if (session?.role === 'user' && session.userId) {
@@ -168,6 +203,7 @@ app.get('/api/playlist', async (req, res) => {
     }
 
     playlistUrl = user.playlistUrl || '';
+    hiddenCategories = user.hiddenCategories || [];
     if (playlistUrl) {
       registerAuthorizedDomainFromUrl(playlistUrl);
     }
@@ -180,6 +216,14 @@ app.get('/api/playlist', async (req, res) => {
     return res.status(400).json({ error: 'Playlist URL not provided.' });
   }
 
+  const sendFilteredCategories = (categories: any[]) => {
+    if (hiddenCategories.length > 0) {
+      const filtered = categories.filter(c => !hiddenCategories.includes(c.id));
+      return res.json(filtered);
+    }
+    return res.json(categories);
+  };
+
   // Auto-register playlist domain (URLs come from DB or env, so they are trusted)
   registerAuthorizedDomainFromUrl(playlistUrl);
 
@@ -191,10 +235,6 @@ app.get('/api/playlist', async (req, res) => {
     console.log('[API] Serving playlist from cache. Re-registering domains...');
     cachedData.forEach((cat: any) => {
       cat.items.forEach((item: any) => {
-        // Items in videoUrl are already proxied, we need the original URL if possible
-        // But our registerAuthorizedDomainFromUrl handles extraction if we update it.
-        // Or we can just trust that the parser callback handled it initially.
-        // Actually, we should store the original domains in the cache or re-extract from videoUrl.
         if (item.videoUrl && item.videoUrl.includes('url=')) {
           try {
             const urlMatch = item.videoUrl.match(/url=([^&]+)/);
@@ -219,40 +259,35 @@ app.get('/api/playlist', async (req, res) => {
         }
       });
     });
-    return res.json(cachedData);
+    return sendFilteredCategories(cachedData);
   }
 
   if (pendingRequests.has(playlistUrl)) {
     console.log('[API] Coalescing request for URL:', playlistUrl.substring(0, 50) + '...');
     try {
       const data = await pendingRequests.get(playlistUrl);
-      return res.json(data);
+      return sendFilteredCategories(data);
     } catch (error: any) {
       return res.status(500).json({ error: 'Failed in previous attempt', details: error.message });
     }
   }
 
   // Create new fetch promise
-    const fetchPromise = (async () => {
+  const fetchPromise = (async () => {
     console.log(`[API] Fetching playlist for user: ${playlistUrl.substring(0, 50)}...`);
 
-    const response = await axios.get(playlistUrl, {
-      timeout: 45000,
-      responseType: 'text', // Force response as text for M3U content
-      headers: {
-        'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', // Many IPTV panels require VLC UA
-        'Accept': '*/*',
-        'Accept-Encoding': 'gzip, deflate, br'
-      },
-      validateStatus: () => true,
-      maxRedirects: 5,
-    });
+    let response;
+    try {
+      response = await playlistHttpClient.get<string>(playlistUrl);
+    } catch (error: any) {
+      if (axios.isAxiosError(error) && error.response) {
+        throw new Error(`Upstream server error: ${error.response.status} ${error.response.statusText || ''}`);
+      }
+
+      throw new Error(error.message || 'Playlist request failed');
+    }
 
     console.log(`[API] Playlist server responded with status: ${response.status}`);
-
-    if (response.status !== 200) {
-      throw new Error(`Upstream server error: ${response.status} ${response.statusText || ''}`);
-    }
 
     if (!response.data || typeof response.data !== 'string') {
       throw new Error('Invalid or empty playlist content');
@@ -261,7 +296,6 @@ app.get('/api/playlist', async (req, res) => {
     // Check for common M3U header to verify content
     if (!response.data.includes('#EXTM3U')) {
       console.warn('[API] Warning: Playlist content does not start with #EXTM3U');
-      // We try to parse it anyway, but log the warning
     }
 
     // Delegate parsing to parser service
@@ -282,7 +316,7 @@ app.get('/api/playlist', async (req, res) => {
   try {
     const categories = await fetchPromise;
     pendingRequests.delete(playlistUrl);
-    res.json(categories);
+    return sendFilteredCategories(categories);
   } catch (error: any) {
     pendingRequests.delete(playlistUrl);
     console.error('[API] Playlist error:', error.message);
@@ -300,11 +334,14 @@ app.get('/api/metadata', async (req, res) => {
     return res.status(400).json({ error: 'Title and Type (movie/series) are required parameters.' });
   }
 
+  console.log(`[TMDB] Metadata search: "${title}" (${type})`);
+
   try {
     const metadata = await TMDBService.searchMedia(title as string, type as 'movie' | 'series');
+    console.log(`[TMDB] ${metadata ? 'Match' : 'No result'} for: "${title}"`);
     res.json(metadata);
   } catch (error: any) {
-    console.error('[API] Metadata error:', error.message);
+    console.error(`[TMDB] API Processing Error for "${title}": ${error.message}`);
     res.status(500).json({ error: 'Failed to fetch metadata', details: error.message });
   }
 });
@@ -499,6 +536,65 @@ app.delete('/api/admin/user/:id', adminAuthMiddleware, async (req, res) => {
   }
 });
 
+app.get('/api/admin/user/:id/categories', adminAuthMiddleware, async (req, res) => {
+  try {
+    const user = await AdminService.getUserById(req.params.id);
+    if (!user) return res.status(404).send('Usuário não encontrado');
+    if (!user.playlistUrl) return res.json([]);
+
+    let categories = playlistCache.get(user.playlistUrl);
+    
+    // Fallback: If not cached, fetch and parse (lightweight version without keeping items in memory)
+    if (!categories) {
+      console.log(`[ADMIN-API] Fetching playlist to preview categories for user ${user.username}`);
+      let m3uContent = '';
+      
+      const isTestEnv = !!process.env.TEST_M3U_PATH;
+      if (isTestEnv && user.playlistUrl === process.env.PLAYLIST_URL) {
+        const fs = await import('fs');
+        const path = await import('path');
+        m3uContent = fs.readFileSync(path.resolve(process.cwd(), process.env.TEST_M3U_PATH as string), 'utf-8');
+      } else {
+        const response = await playlistHttpClient.get(user.playlistUrl);
+        m3uContent = response.data;
+      }
+      categories = M3UParserService.parse(m3uContent, () => {});
+    }
+
+    // Map to a lightweight summary format so we don't send 50MB of JSON to the admin panel
+    const summary = categories.map((cat: any) => ({
+      id: cat.id,
+      title: cat.title,
+      type: cat.type,
+      itemCount: cat.items ? cat.items.length : 0,
+      items: cat.items ? cat.items.map((i: any) => i.title) : []
+    }));
+
+    res.json(summary);
+  } catch (e: any) {
+    console.error(`[ADMIN-API] Error fetching categories for user ${req.params.id}:`, e.message);
+    res.status(500).json({ error: 'Erro ao carregar lista de categorias' });
+  }
+});
+
+app.post('/api/admin/user/:id/hiddenCategories', adminAuthMiddleware, async (req, res) => {
+  try {
+    const { categories } = req.body;
+    if (!Array.isArray(categories)) {
+      return res.status(400).json({ error: 'categories must be an array' });
+    }
+    const success = await AdminService.updateHiddenCategories(req.params.id, categories);
+    if (success) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'Usuário não encontrado ou erro ao salvar no banco' });
+    }
+  } catch (err: any) {
+    console.error(`[ADMIN] Erro ao salvar categorias ocultas:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Middleware de Erro Global
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error('[FATAL ERROR]', err);
@@ -520,7 +616,7 @@ async function startLocalServer() {
   const PORT = Number(process.env.PORT || 3000);
 
   // In development, use Vite middleware for HMR
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProductionRuntime) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -535,7 +631,7 @@ async function startLocalServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] Xandeflix running: http://localhost:${PORT}`);
-    console.log(`[SERVER] Mode: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`[SERVER] Mode: ${isProductionRuntime ? 'production' : 'development'}`);
   });
 }
 

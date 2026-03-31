@@ -25,6 +25,8 @@ export interface Media {
   rating: string;
   duration?: string;
   category: string;
+  tvgId?: string;
+  tvgName?: string;
   currentEpisode?: Episode;
   currentSeasonNumber?: number;
   seasons?: {

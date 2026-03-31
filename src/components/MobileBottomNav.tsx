@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Home, Film, Tv, Settings, Radio } from 'lucide-react';
+import { Search, Home, Film, Tv, Settings, Radio, Heart } from 'lucide-react';
 
 interface MobileBottomNavProps {
   activeId?: string;
@@ -9,6 +9,7 @@ interface MobileBottomNavProps {
 const ITEMS = [
   { id: 'search', label: 'Busca', icon: Search },
   { id: 'home', label: 'Inicio', icon: Home },
+  { id: 'mylist', label: 'Lista', icon: Heart },
   { id: 'live', label: 'Ao Vivo', icon: Radio },
   { id: 'movie', label: 'Filmes', icon: Film },
   { id: 'series', label: 'Series', icon: Tv },
@@ -30,7 +31,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       }}
     >
       <div
-        className="grid grid-cols-6 rounded-[28px] border border-white/10 bg-black/85 backdrop-blur-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)]"
+        className="grid grid-cols-7 rounded-[28px] border border-white/10 bg-black/85 backdrop-blur-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)]"
         style={{ padding: '10px 8px' }}
       >
         {ITEMS.map((item) => {

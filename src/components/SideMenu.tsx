@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableHighlight } from 'react-native';
 import { motion } from 'motion/react';
-import { Search, Home, Film, Tv, Settings, User, Radio, LogOut } from 'lucide-react';
+import { Search, Home, Film, Tv, Settings, User, Radio, LogOut, Heart } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -18,6 +18,7 @@ interface MenuItem {
 const MENU_ITEMS: MenuItem[] = [
   { id: 'search', label: 'Busca', icon: Search },
   { id: 'home', label: 'Início', icon: Home },
+  { id: 'mylist', label: 'Minha Lista', icon: Heart },
   { id: 'live', label: 'Canais ao Vivo', icon: Radio },
   { id: 'movie', label: 'Filmes', icon: Film },
   { id: 'series', label: 'Séries', icon: Tv },

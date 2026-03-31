@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --ignore users.json server.ts",
-    "build": "vite build",
-    "build:clean": "rimraf dist && tsc -p tsconfig.json",
+    "build": "npm run clean && npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:clean": "npm run build",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "lint": "eslint . --ext .ts,.tsx",
-    "analyze": "source-map-explorer 'dist/assets/*.js'"
+    "analyze": "source-map-explorer 'dist/assets/*.js'",
+    "build:all": "npm run build",
+    "start": "node dist/server/server.js"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -19,11 +23,14 @@
     "@types/video.js": "^7.3.58",
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.13.6",
+    "axios-retry": "^4.5.0",
+    "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.3.2",
     "lucide-react": "^0.475.0",
     "motion": "^12.23.24",
     "mpegts.js": "^1.8.0",
@@ -39,6 +46,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",

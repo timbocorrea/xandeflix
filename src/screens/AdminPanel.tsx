@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Trash2, X, Edit2, Save } from 'lucide-react';
+import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Trash2, X, Edit2, Save, Eye, ChevronDown, ChevronRight, Folder, FolderOpen, Tv, Film, Clapperboard, FileVideo, Square, CheckSquare } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 // Wrapper to isolate lucide icons from react-native-web's createElement
@@ -22,6 +22,68 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   
   // Modal State for editing
   const [editingUser, setEditingUser] = useState<any | null>(null);
+
+  // Modal State for Preview (Tree view)
+  const [previewingUser, setPreviewingUser] = useState<any | null>(null);
+  const [previewCategories, setPreviewCategories] = useState<any[] | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [expandedRoot, setExpandedRoot] = useState<string | null>(null);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
+  const [savingHidden, setSavingHidden] = useState(false);
+
+  const handlePreviewUser = async (user: any) => {
+    setPreviewingUser(user);
+    setPreviewCategories(null);
+    setExpandedRoot(null);
+    setExpandedCategory(null);
+    setHiddenCategories(user.hiddenCategories || []);
+    setPreviewLoading(true);
+    try {
+      const response = await fetch(`/api/admin/user/${user.id}/categories`, {
+        headers: { 'x-admin-token': authToken }
+      });
+      if (!response.ok) {
+        throw new Error('Não foi possível carregar as categorias da lista.');
+      }
+      const data = await response.json();
+      setPreviewCategories(data);
+    } catch (err: any) {
+      alert(err.message);
+      setPreviewingUser(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleSaveHidden = async () => {
+    if (!previewingUser) return;
+    setSavingHidden(true);
+    try {
+      const response = await fetch(`/api/admin/user/${previewingUser.id}/hiddenCategories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
+        body: JSON.stringify({ categories: hiddenCategories })
+      });
+      if (!response.ok) throw new Error('Não foi possível salvar os filtros.');
+      const updatedManagedUsers = managedUsers.map(u => 
+        u.id === previewingUser.id ? { ...u, hiddenCategories } : u
+      );
+      setManagedUsers(updatedManagedUsers);
+      alert('Filtros salvos com sucesso!');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSavingHidden(false);
+    }
+  };
+
+  const toggleCategoryVisibility = (catId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setHiddenCategories(prev => 
+      prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]
+    );
+  };
 
   const readErrorMessage = useCallback(async (response: Response, fallback: string) => {
     try {
@@ -264,6 +326,13 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                     </div>
                     <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                       <button
+                        onClick={() => handlePreviewUser(user)}
+                        title="Ver Categorias"
+                        style={{ ...s.actionBtn, borderColor: 'rgba(255,255,255,0.1)' }}
+                      >
+                        <Icon><Eye size={16} color="white" /></Icon>
+                      </button>
+                      <button
                         onClick={() => setEditingUser({ ...user })}
                         style={{ ...s.actionBtn, borderColor: 'rgba(255,255,255,0.1)' }}
                       >
@@ -350,6 +419,149 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
           </div>
         </div>
       )}
+
+      {/* Category Preview Modal */}
+      {previewingUser && (
+        <div style={s.modalOverlay}>
+          <div style={{...s.modal, width: 1200, maxHeight: '95vh', display: 'flex', flexDirection: 'column'}}>
+            <div style={s.modalHeader}>
+              <div>
+                 <h2 style={s.modalTitle}>Categorias de {previewingUser.name}</h2>
+                 <p style={{ color: 'rgba(255,255,255,0.5)', margin: '4px 0 0 0', fontSize: 14 }}>
+                   {previewingUser.playlistUrl || 'Nenhuma lista vinculada'}
+                 </p>
+              </div>
+              <button 
+                onClick={() => {
+                   setPreviewingUser(null);
+                   setPreviewCategories(null);
+                }} 
+                style={s.closeBtn}
+              >
+                <Icon><X size={24} color="white" /></Icon>
+              </button>
+            </div>
+            
+            <div style={{ ...s.modalBody, overflowY: 'auto', flex: 1, paddingRight: 10 }}>
+              {previewLoading ? (
+                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 60, gap: 16 }}>
+                    <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16 }}>Processando e analisando a lista M3U (isso pode demorar vários segundos)...</span>
+                 </div>
+              ) : previewCategories && previewCategories.length > 0 ? (
+                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {[
+                      { id: 'live', label: 'TV AO VIVO', icon: <Tv size={18} />, color: '#F87171', bg: 'rgba(239,68,68,0.1)' },
+                      { id: 'series', label: 'SÉRIES', icon: <Clapperboard size={18} />, color: '#C084FC', bg: 'rgba(168,85,247,0.1)' },
+                      { id: 'movie', label: 'FILMES', icon: <Film size={18} />, color: '#60A5FA', bg: 'rgba(59,130,246,0.1)' }
+                    ].map(root => {
+                       const rootCategories = previewCategories.filter(c => c.type === root.id);
+                       if (rootCategories.length === 0) return null;
+                       const isRootExpanded = expandedRoot === root.id;
+                       
+                       return (
+                         <div key={root.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                           {/* Root Level (Type) */}
+                           <div 
+                             onClick={() => setExpandedRoot(isRootExpanded ? null : root.id)}
+                             style={{
+                               display: 'flex', alignItems: 'center', gap: 12, padding: 16,
+                               backgroundColor: root.bg, border: `1px solid ${root.color}40`, borderRadius: 8, cursor: 'pointer'
+                             }}>
+                             <Icon>
+                               {isRootExpanded ? <ChevronDown size={20} color={root.color} /> : <ChevronRight size={20} color={root.color} />}
+                             </Icon>
+                             <Icon>{root.icon}</Icon>
+                             <span style={{ fontWeight: 900, color: root.color, flex: 1, letterSpacing: 1 }}>{root.label}</span>
+                             <span style={{ color: root.color, opacity: 0.8, fontSize: 13, fontWeight: 'bold' }}>
+                               {rootCategories.length} pastas
+                             </span>
+                           </div>
+
+                           {/* Category Level (Folders) */}
+                           {isRootExpanded && (
+                             <div style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, marginBottom: 12 }}>
+                               {rootCategories.map((cat: any, idx: number) => {
+                                 const isCatExpanded = expandedCategory === cat.id;
+                                 return (
+                                   <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                     <div
+                                       onClick={() => setExpandedCategory(isCatExpanded ? null : cat.id)}
+                                       style={{
+                                         display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+                                         backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, cursor: 'pointer',
+                                         opacity: hiddenCategories.includes(cat.id) ? 0.4 : 1
+                                       }}>
+                                       <div 
+                                         onClick={(e) => toggleCategoryVisibility(cat.id, e)}
+                                         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}
+                                       >
+                                         <Icon>
+                                           {hiddenCategories.includes(cat.id) ? (
+                                             <Square size={20} color="rgba(255,255,255,0.3)" />
+                                           ) : (
+                                             <CheckSquare size={20} color="#3B82F6" />
+                                           )}
+                                         </Icon>
+                                       </div>
+                                       <Icon>
+                                         {isCatExpanded ? <ChevronDown size={16} color="white" /> : <ChevronRight size={16} color="white" />}
+                                       </Icon>
+                                       <Icon>
+                                         {isCatExpanded ? <FolderOpen size={18} color="#E5A00D" fill="#E5A00D" fillOpacity={0.2} /> : <Folder size={18} color="#E5A00D" fill="#E5A00D" fillOpacity={0.2} />}
+                                       </Icon>
+                                       <span style={{ fontWeight: 'bold', color: 'white', flex: 1, textDecoration: hiddenCategories.includes(cat.id) ? 'line-through' : 'none' }}>{cat.title}</span>
+                                       <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>{cat.itemCount} itens</span>
+                                     </div>
+
+                                     {/* Item Level (Files) */}
+                                     {isCatExpanded && cat.items && cat.items.length > 0 && (
+                                       <div style={{ paddingLeft: 44, display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 12, paddingTop: 4 }}>
+                                         {cat.items.slice(0, 500).map((itemTitle: string, itemIdx: number) => (
+                                           <div key={itemIdx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', opacity: hiddenCategories.includes(cat.id) ? 0.3 : 1 }}>
+                                             <Icon><FileVideo size={14} color="rgba(255,255,255,0.2)" /></Icon>
+                                             <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14 }}>{itemTitle}</span>
+                                           </div>
+                                         ))}
+                                         {cat.items.length > 500 && (
+                                           <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, paddingLeft: 22, fontStyle: 'italic', marginTop: 4 }}>
+                                             + {cat.items.length - 500} arquivos não exibidos para economizar memória
+                                           </div>
+                                         )}
+                                       </div>
+                                     )}
+                                   </div>
+                                 );
+                               })}
+                             </div>
+                           )}
+                         </div>
+                       );
+                    })}
+                 </div>
+              ) : (
+                 <div style={{ textAlign: 'center', padding: 40, color: 'rgba(255,255,255,0.4)' }}>
+                    Nenhuma categoria encontrada ou lista inválida.
+                 </div>
+              )}
+            </div>
+            {/* Modal Footer (Save Filters) */}
+            <div style={{ ...s.modalFooter, borderTop: '1px solid rgba(255,255,255,0.05)', backgroundColor: '#0a0a0a' }}>
+              <div style={{ display: 'flex', flex: 1, alignItems: 'center', gap: 12 }}>
+                 <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+                   <strong style={{ color: 'white' }}>{hiddenCategories.length}</strong> categorias ocultadas
+                 </span>
+              </div>
+              <button 
+                onClick={handleSaveHidden} 
+                disabled={savingHidden}
+                style={{ ...s.saveBtn, backgroundColor: savingHidden ? 'rgba(59,130,246,0.5)' : '#3B82F6', cursor: savingHidden ? 'not-allowed' : 'pointer' }}>
+                <Icon><Save size={18} color="white" /></Icon>
+                {savingHidden ? 'Salvando...' : 'Salvar Filtros'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -405,7 +617,7 @@ const s: Record<string, React.CSSProperties> = {
   actionBtn: { width: 36, height: 36, borderRadius: 18, border: '1px solid', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', padding: 0 },
   
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '125vw', height: '125vh', backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modal: { backgroundColor: '#111', width: 600, borderRadius: 24, padding: 40, border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 20px 50px rgba(0,0,0,0.5)' },
+  modal: { backgroundColor: '#111', width: 800, borderRadius: 24, padding: 40, border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 20px 50px rgba(0,0,0,0.5)' },
   modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 },
   modalTitle: { fontSize: 24, fontWeight: 900, color: 'white', margin: 0 },
   closeBtn: { background: 'transparent', border: 'none', cursor: 'pointer' },

@@ -3,7 +3,7 @@
     "id": "02df2f82-f51a-484b-ba69-a6781d2fa75a",
     "name": "alexandre",
     "username": "alexandre",
-    "password": "123456",
+    "password": "$2b$10$LRIWoH6Roa92tvkWwININuCzxy.ENGHmqzg.bGq8ydy628Ottni4m",
     "playlistUrl": "http://nt.chavedelta.site/get.php?username=212305365&password=678335832&type=m3u_plus&output=hls",
     "isBlocked": false,
     "lastAccess": "2026-03-25T21:28:34.775Z"
@@ -12,7 +12,7 @@
     "id": "4440f813-5195-4175-961a-b9e66927fa70",
     "name": "janaina",
     "username": "janaina",
-    "password": "123456",
+    "password": "$2b$10$s1zQoAw.qnUCMc1a/8/wiuJgO3N7P0gGMqV.wJ0XrdreF1sm8uB1m",
     "playlistUrl": "http://dnsd1.space/get.php?username=611791144&password=442588425&type=m3u_plus&output=mpegts",
     "isBlocked": false,
     "lastAccess": "2026-03-28T21:59:28.637Z"
@@ -21,7 +21,7 @@
     "id": "a04789d9-a76f-4291-8ed8-07318dfce4b8",
     "name": "teste",
     "username": "teste",
-    "password": "123456",
+    "password": "$2b$10$qSO.CZPdKNFb6AaVuSgdy.cfRzU8JS/TLV0cxuLRZ.i3DOTGoLSRa",
     "playlistUrl": "https://real.cdnbr.site/get.php?username=837181487&password=841265864&type=m3u_plus&output=mpegts",
     "isBlocked": false,
     "lastAccess": "2026-03-30T15:41:23.957Z"

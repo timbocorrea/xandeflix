@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { View, StyleSheet, ScrollView, Animated, Dimensions, TouchableHighlight, Text, TextInput } from 'react-native';
 import { RotateCcw, Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -16,14 +16,47 @@ import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { SideMenu } from '../components/SideMenu';
 import { MobileBottomNav } from '../components/MobileBottomNav';
 import { SettingsModal } from '../components/SettingsModal';
-import { VideoPlayer } from '../components/VideoPlayer';
 import { HeroSection } from '../components/HeroSection';
 import { CategoryRow } from '../components/CategoryRow';
 import LoadingScreen from '../components/LoadingScreen';
-import { MediaDetailsPage } from '../components/MediaDetailsModal';
-import { CategoryGridView } from '../components/CategoryGridView';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const VideoPlayer = lazy(() =>
+  import('../components/VideoPlayer').then((module) => ({ default: module.VideoPlayer })),
+);
+const MediaDetailsPage = lazy(() =>
+  import('../components/MediaDetailsModal').then((module) => ({ default: module.MediaDetailsPage })),
+);
+const CategoryGridView = lazy(() =>
+  import('../components/CategoryGridView').then((module) => ({ default: module.CategoryGridView })),
+);
+
+const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
+
+const CategoryRowSkeleton = ({ layout }: { layout: any; key?: any }) => {
+  const cardWidth = layout.isMobile ? 148 : layout.isTablet ? 180 : 220;
+  const cardHeight = Math.round(cardWidth * 1.5);
+  const cardGap = layout.isMobile ? 14 : layout.isTablet ? 18 : 24;
+
+  return (
+    <View style={{ marginBottom: 44, opacity: 0.3 }}>
+      <View style={{ width: 300, height: 32, backgroundColor: '#333', borderRadius: 8, marginBottom: 24, marginLeft: 4 }} />
+      <View style={{ flexDirection: 'row' }}>
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <View 
+            key={i} 
+            style={{ 
+              width: cardWidth, 
+              height: cardHeight, 
+              backgroundColor: '#222', 
+              borderRadius: 12, 
+              marginRight: cardGap 
+            }} 
+          />
+        ))}
+      </View>
+    </View>
+  );
+};
 
 const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   // Global Store State
@@ -364,14 +397,18 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         showsVerticalScrollIndicator={false}
       >
         {!isSearchMode ? (
-          <HeroSection 
-            media={selectedMedia}
-            onPlay={handleMediaPress}
-            isAutoRotating={isAutoRotating}
-            onAutoRotate={() => setIsAutoRotating(true)}
-            focusedId={focusedId}
-            onFocus={handleInteractiveFocus}
-          />
+          loading && allCategories.length === 0 ? (
+            <View style={{ height: 400, backgroundColor: '#111', borderRadius: 20, marginBottom: 40, opacity: 0.3 }} />
+          ) : (
+            <HeroSection 
+              media={selectedMedia}
+              onPlay={handleMediaPress}
+              isAutoRotating={isAutoRotating}
+              onAutoRotate={() => setIsAutoRotating(true)}
+              focusedId={focusedId}
+              onFocus={handleInteractiveFocus}
+            />
+          )
         ) : (
           <View
             style={[
@@ -399,7 +436,12 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             layout.isCompact && styles.categoriesContainerCompact,
           ]}
         >
-          {isSearchIdle ? (
+          {loading && allCategories.length === 0 ? (
+            // Show Skeletons on initial load
+            [1, 2, 3].map((i) => (
+              <CategoryRowSkeleton key={i} layout={layout} />
+            ))
+          ) : isSearchIdle ? (
             <View style={[styles.emptyContainer, layout.isCompact && styles.emptyContainerCompact]}>
               <Text style={[styles.emptyText, layout.isCompact && styles.emptyTextCompact]}>
                 Digite algo para comecar a busca.
@@ -557,50 +599,56 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       {/* Overlays */}
       <AnimatePresence>
         {isDetailsVisible && detailsMedia && (
-          <MediaDetailsPage
-            key={detailsMedia.id}
-            media={detailsMedia}
-            onClose={() => setIsDetailsVisible(false)}
-            onPlay={handlePlay}
-            onSelectMedia={setDetailsMedia}
-          />
+          <Suspense fallback={null}>
+            <MediaDetailsPage
+              key={detailsMedia.id}
+              media={detailsMedia}
+              onClose={() => setIsDetailsVisible(false)}
+              onPlay={handlePlay}
+              onSelectMedia={setDetailsMedia}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {activeVideoUrl && (
-          <VideoPlayer 
-            key={activeVideoUrl}
-            url={activeVideoUrl} 
-            mediaType={videoType || 'live'}
-            media={playingMedia}
-            nextEpisode={nextEpisode}
-            onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
-            onClose={() => {
-              setActiveVideoUrl(null);
-              setPlayingMedia(null);
-              try {
-                if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
-                  document.exitFullscreen().catch(() => {});
-                }
-              } catch (e) {}
-            }}
-            isMinimized={isPlayerMinimized}
-            onToggleMinimize={handleToggleMinimize}
-          />
+          <Suspense fallback={null}>
+            <VideoPlayer 
+              key={activeVideoUrl}
+              url={activeVideoUrl} 
+              mediaType={videoType || 'live'}
+              media={playingMedia}
+              nextEpisode={nextEpisode}
+              onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
+              onClose={() => {
+                setActiveVideoUrl(null);
+                setPlayingMedia(null);
+                try {
+                  if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+                    document.exitFullscreen().catch(() => {});
+                  }
+                } catch (e) {}
+              }}
+              isMinimized={isPlayerMinimized}
+              onToggleMinimize={handleToggleMinimize}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {gridCategory && (
-          <CategoryGridView 
-            category={gridCategory}
-            onClose={() => setGridCategory(null)}
-            onSelectMedia={(media) => {
-              setGridCategory(null);
-              handleMediaPress(media);
-            }}
-          />
+          <Suspense fallback={null}>
+            <CategoryGridView 
+              category={gridCategory}
+              onClose={() => setGridCategory(null)}
+              onSelectMedia={(media) => {
+                setGridCategory(null);
+                handleMediaPress(media);
+              }}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 

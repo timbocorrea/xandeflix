@@ -1,10 +1,10 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableHighlight, Image, FlatList, Pressable } from 'react-native';
+import { View, Text, StyleSheet, TouchableHighlight, Image, FlatList, Pressable, Platform } from 'react-native';
 import { Category, Media } from '../types';
 import { useTMDB } from '../hooks/useTMDB';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
-import { ChevronLeft, ChevronRight, LayoutGrid } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LayoutGrid, Heart } from 'lucide-react';
 
 interface MediaItemProps {
   item: Media;
@@ -32,9 +32,14 @@ const MediaItem = React.memo(({
   onPress,
 }: MediaItemProps) => {
   const navId = `item-${rowIndex}-${index}`;
-  const [imgError, setImgError] = React.useState(false);
+  const layout = useResponsiveLayout();
+  const [brokenImageUri, setBrokenImageUri] = React.useState<string | null>(null);
   const { data: tmdbData, loading: tmdbLoading } = useTMDB(item.title, item.type);
+  const [isHovered, setIsHovered] = React.useState(false);
   const playbackProgress = useStore((state) => state.playbackProgress);
+  const favorites = useStore((state) => state.favorites);
+  const toggleFavorite = useStore((state) => state.toggleFavorite);
+  const isFavorite = favorites.includes(item.id);
   
   // Strategy "Efeito Pulo": Hide unlisted items without covers (excluding live channels)
   const isLiveChannel = item.type === 'live';
@@ -44,12 +49,17 @@ const MediaItem = React.memo(({
     return null;
   }
   
+  const showMetadata = isFocused || (isHovered && !layout.isMobile);
+
   // High-quality fallback if thumbnail domain (like xvbroker.click) is down
   const fallbackImg = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop`;
   
-  const displayImage = imgError ? fallbackImg : (tmdbData?.thumbnail || item.thumbnail);
+  const targetImage = tmdbData?.thumbnail || item.thumbnail;
+  const isBroken = targetImage && brokenImageUri === targetImage;
+  const displayImage = isBroken ? fallbackImg : targetImage;
+  
   // Use cover for beautiful 2:3 tmdb posters, but contain for random 16:9 IPTV logos to avoid heavy cropping 
-  const displayMode = (tmdbData?.thumbnail || imgError) ? 'cover' : 'contain';
+  const displayMode = (tmdbData?.thumbnail || isBroken) ? 'cover' : 'contain';
 
   const progress = playbackProgress[item.id];
   const percentComplete = progress && progress.duration > 0 ? (progress.currentTime / progress.duration) * 100 : 0;
@@ -58,6 +68,9 @@ const MediaItem = React.memo(({
     <TouchableHighlight
       onFocus={() => onFocus(item, navId)}
       onPress={() => onPress(item)}
+      // @ts-ignore - Web only
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       underlayColor="transparent"
       style={[
         styles.cardContainer,
@@ -66,10 +79,10 @@ const MediaItem = React.memo(({
           height: cardHeight,
           marginRight: cardGap,
         },
-        isFocused && styles.cardFocused
+        (isFocused || isHovered) && styles.cardFocused
       ]}
       // @ts-ignore
-      className={`media-card-transition ${isFocused ? 'cardFocused' : 'cardContainer'}`}
+      className={`media-card-transition ${isFocused || isHovered ? 'cardFocused' : 'cardContainer'}`}
     >
       <View style={styles.cardInner}>
         <Image 
@@ -78,16 +91,38 @@ const MediaItem = React.memo(({
           resizeMode={displayMode}
           // @ts-ignore
           loading="lazy"
-          onError={() => setImgError(true)}
+          onError={() => {
+            if (targetImage) setBrokenImageUri(targetImage);
+          }}
         />
         <View style={styles.placeholder} />
         
-        {isFocused && (
+        {showMetadata && (
           <View style={styles.cardOverlay}>
             <View style={[styles.overlayInner, isCompact && styles.overlayInnerCompact]}>
-              <Text style={[styles.cardTitle, isCompact && styles.cardTitleCompact]} numberOfLines={1}>
-                {item.title}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <Text style={[styles.cardTitle, isCompact && styles.cardTitleCompact, { flex: 1 }]} numberOfLines={2}>
+                  {item.title}
+                </Text>
+                <Pressable 
+                  // @ts-ignore
+                  onPress={(e) => { 
+                    e.stopPropagation(); 
+                    toggleFavorite(item.id); 
+                  }}
+                  style={({ hovered }) => [
+                    styles.favoriteButton,
+                    hovered && { transform: 'scale(1.15)', backgroundColor: 'rgba(255,255,255,0.1)' }
+                  ]}
+                >
+                  <Heart 
+                    fill={isFavorite ? '#E50914' : 'transparent'} 
+                    color={isFavorite ? '#E50914' : 'white'} 
+                    size={isCompact ? 18 : 22} 
+                    strokeWidth={isFavorite ? 0 : 2}
+                  />
+                </Pressable>
+              </View>
             </View>
           </View>
         )}
@@ -141,15 +176,22 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
     setScrollX(newScrollX);
   };
 
+  // Refined auto-scroll logic for TV/Keyboard navigation
   React.useEffect(() => {
     if (focusedId && focusedId.startsWith(`item-${rowIndex}-`)) {
       const index = parseInt(focusedId.split('-')[2]);
       if (!isNaN(index) && flatListRef.current) {
-        flatListRef.current.scrollToIndex({
-          index,
-          animated: true,
-          viewPosition: 0.5 // Centers the item
-        });
+        // On Web, browsers and TVs have native scrollIntoView logic. 
+        // Programmatic scrollToIndex causes jumping when clicking with a mouse
+        // because the smaller screen width might falsely flag it as a tablet/mobile.
+        // We only enforce programmatic centering on native mobile/TV apps.
+        if (Platform.OS !== 'web') {
+          flatListRef.current.scrollToIndex({
+            index,
+            animated: true,
+            viewPosition: 0.5 // Centers the item for TV remote navigation
+          });
+        }
       }
     }
   }, [focusedId, rowIndex]);
@@ -381,24 +423,24 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     bottom: 0,
-    width: 60,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    width: 45,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 100,
+    zIndex: 1000,
     // @ts-ignore
-    transition: 'all 0.2s ease-in-out',
+    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
     cursor: 'pointer',
   } as any,
   leftButton: {
-    left: -20,
-    borderTopRightRadius: 12,
-    borderBottomRightRadius: 12,
+    left: 0,
+    borderTopRightRadius: 16,
+    borderBottomRightRadius: 16,
   },
   rightButton: {
     right: 0,
-    borderTopLeftRadius: 12,
-    borderBottomLeftRadius: 12,
+    borderTopLeftRadius: 16,
+    borderBottomLeftRadius: 16,
   },
   seeAllCard: {
     borderRadius: 12,
@@ -426,6 +468,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontFamily: 'Outfit',
   },
+  favoriteButton: {
+    padding: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    // @ts-ignore
+    transition: 'all 0.2s ease',
+  } as any,
 });
 
 //
