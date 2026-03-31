@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS public.xandeflix_users (
     media_overrides JSONB DEFAULT '{}'::jsonb
 );
 
+-- Tabela para correções globais (aplicadas a todos os usuários que tiverem o mesmo nome de arquivo)
+CREATE TABLE IF NOT EXISTS public.global_media_overrides (
+    title_match TEXT PRIMARY KEY, -- Nome do arquivo em minúsculo e sem espaços extras
+    override_data JSONB NOT NULL, -- { title, thumbnail, description, etc }
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Inserindo usuario administrador padrao com hash bcrypt compativel.
 -- Lembre-se de trocar a senha apos o primeiro acesso.
 INSERT INTO public.xandeflix_users (username, password, name, role)

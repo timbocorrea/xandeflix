@@ -33,11 +33,13 @@ interface SupabaseUserRow {
 }
 
 const USERS_FILE = path.join(process.cwd(), 'users.json');
+const GLOBAL_OVERRIDES_FILE = path.join(process.cwd(), 'globalOverrides.json');
 const COMPILED_SERVER_MARKER = `${path.sep}dist${path.sep}server${path.sep}`;
 const IS_COMPILED_SERVER_RUNTIME = (process.argv[1] || '').includes(COMPILED_SERVER_MARKER);
 
 export class AdminService {
   private static users: UserRecord[] = [];
+  private static globalOverrides: Record<string, any> = {};
   private static initialized = false;
 
   private static isHash(password: string): boolean {
@@ -80,6 +82,34 @@ export class AdminService {
 
   private static normalizeIdentifier(value: string): string {
     return value.trim().toLowerCase();
+  }
+
+  public static normalizeTitleForMatching(title: string): string {
+    if (!title) return '';
+    
+    let normalized = title.trim().toUpperCase();
+    
+    // Remove common quality tags
+    const qualityTags = [
+      /\bFHD\b/g, /\bHD\b/g, /\bSD\b/g, /\b4K\b/g, /\bUHD\b/g, /\bL\b/g, 
+      /\bULTRA HD\b/g, /\bH265\b/g, /\bH264\b/g, /\bHEVC\b/g, /\b\d{3,4}P\b/g
+    ];
+    
+    qualityTags.forEach(tag => {
+      normalized = normalized.replace(tag, '');
+    });
+    
+    // Remove language tags / symbols
+    const extraTags = [
+      /\[.*?\]/g, /\(.*?\)|\{.*?\}/g, /\|/g, /:/g, /-/g
+    ];
+    
+    extraTags.forEach(tag => {
+      normalized = normalized.replace(tag, '');
+    });
+
+    // Remove double spaces and trim again
+    return normalized.replace(/\s\s+/g, ' ').trim().toLowerCase();
   }
 
   private static isUuid(value: string): boolean {
@@ -127,6 +157,26 @@ export class AdminService {
       fs.writeFileSync(USERS_FILE, JSON.stringify(this.users, null, 2));
     } catch (err) {
       console.error('[ADMIN] Error saving users:', err);
+    }
+  }
+
+  private static loadGlobalOverrides() {
+    try {
+      if (fs.existsSync(GLOBAL_OVERRIDES_FILE)) {
+        const globalData = fs.readFileSync(GLOBAL_OVERRIDES_FILE, 'utf-8');
+        this.globalOverrides = JSON.parse(globalData) || {};
+        console.log(`[ADMIN] Loaded ${Object.keys(this.globalOverrides).length} global overrides.`);
+      }
+    } catch (e) {
+      console.error('[ADMIN] Error reading global overrides file:', e);
+    }
+  }
+
+  private static saveGlobalOverrides() {
+    try {
+      fs.writeFileSync(GLOBAL_OVERRIDES_FILE, JSON.stringify(this.globalOverrides, null, 2), 'utf-8');
+    } catch (e) {
+      console.error('[ADMIN] Error saving global overrides:', e);
     }
   }
 
@@ -266,6 +316,7 @@ export class AdminService {
     }
 
     this.loadUsers();
+    this.loadGlobalOverrides();
     const migratedLocalPasswords = this.migrateLegacyLocalPasswords();
     if (migratedLocalPasswords > 0) {
       this.saveUsers();
@@ -621,6 +672,61 @@ export class AdminService {
     }
 
     return false;
+  }
+
+  public static async updateGlobalMediaOverride(itemTitle: string, override: any): Promise<boolean> {
+    this.initialize();
+
+    const normalizedTitle = this.normalizeTitleForMatching(itemTitle);
+    if (!normalizedTitle) return false;
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('global_media_overrides')
+          .upsert({
+            title_match: normalizedTitle,
+            override_data: override,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'title_match' });
+
+        if (error) throw error;
+        
+        console.log(`[ADMIN] Global override saved to Supabase for: "${itemTitle}"`);
+      } catch (err: any) {
+        console.warn(`[ADMIN] Could not save global override to Supabase: ${err.message}`);
+      }
+    }
+
+    this.globalOverrides[normalizedTitle] = override;
+    this.saveGlobalOverrides();
+    return true;
+  }
+
+  public static async getGlobalMediaOverrides(): Promise<Record<string, any>> {
+    this.initialize();
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('global_media_overrides')
+          .select('title_match, override_data');
+
+        if (!error && data) {
+          const fetched: Record<string, any> = {};
+          data.forEach(row => {
+            fetched[row.title_match] = row.override_data;
+          });
+          // Update local memory
+          this.globalOverrides = { ...this.globalOverrides, ...fetched };
+          return this.globalOverrides;
+        }
+      } catch (err: any) {
+        console.warn(`[ADMIN] Could not fetch global overrides from Supabase: ${err.message}`);
+      }
+    }
+
+    return this.globalOverrides;
   }
 
 

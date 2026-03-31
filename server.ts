@@ -220,7 +220,7 @@ app.get('/api/playlist', async (req, res) => {
     return res.status(400).json({ error: 'Playlist URL not provided.' });
   }
 
-  const sendFilteredCategories = (categories: any[]) => {
+  const sendFilteredCategories = async (categories: any[]) => {
     let result = categories;
     
     if (hiddenCategories.length > 0) {
@@ -233,12 +233,30 @@ app.get('/api/playlist', async (req, res) => {
       );
     }
     
+    // Apply User-Specific Media Overrides (High Priority)
     if (Object.keys(mediaOverrides).length > 0) {
       result = result.map(c => ({
         ...c,
         items: c.items?.map((i: any) => 
           mediaOverrides[i.url] ? { ...i, ...mediaOverrides[i.url] } : i
         )
+      }));
+    }
+
+    // Apply Global Media Overrides (Low Priority - only if no user override exists)
+    const globals = await AdminService.getGlobalMediaOverrides();
+    if (Object.keys(globals).length > 0) {
+      result = result.map(c => ({
+        ...c,
+        items: c.items?.map((i: any) => {
+          const normalizedTitle = AdminService.normalizeTitleForMatching(i.title || '');
+          const globalMatch = globals[normalizedTitle];
+          // Only apply global if item was NOT already overridden by this user
+          if (globalMatch && !mediaOverrides[i.url]) {
+            return { ...i, ...globalMatch };
+          }
+          return i;
+        })
       }));
     }
     
@@ -280,14 +298,14 @@ app.get('/api/playlist', async (req, res) => {
         }
       });
     });
-    return sendFilteredCategories(cachedData);
+    return await sendFilteredCategories(cachedData);
   }
 
   if (pendingRequests.has(playlistUrl)) {
     console.log('[API] Coalescing request for URL:', playlistUrl.substring(0, 50) + '...');
     try {
       const data = await pendingRequests.get(playlistUrl);
-      return sendFilteredCategories(data);
+      return await sendFilteredCategories(data);
     } catch (error: any) {
       return res.status(500).json({ error: 'Failed in previous attempt', details: error.message });
     }
@@ -337,7 +355,7 @@ app.get('/api/playlist', async (req, res) => {
   try {
     const categories = await fetchPromise;
     pendingRequests.delete(playlistUrl);
-    return sendFilteredCategories(categories);
+    return await sendFilteredCategories(categories);
   } catch (error: any) {
     pendingRequests.delete(playlistUrl);
     console.error('[API] Playlist error:', error.message);
@@ -655,6 +673,20 @@ app.post('/api/admin/user/:id/mediaOverrides', adminAuthMiddleware, async (req, 
     }
   } catch (err: any) {
     console.error(`[ADMIN] Erro ao salvar overrides de mídia:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/globalMediaOverride', adminAuthMiddleware, async (req, res) => {
+  try {
+    const { itemTitle, override } = req.body;
+    if (!itemTitle || !override) {
+      return res.status(400).json({ error: 'itemTitle and override required' });
+    }
+    const success = await AdminService.updateGlobalMediaOverride(itemTitle, override);
+    res.json({ success });
+  } catch (err: any) {
+    console.error(`[ADMIN] Erro ao salvar override global:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });

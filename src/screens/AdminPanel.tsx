@@ -36,6 +36,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
 
   // Item Specific Metadata Modal
   const [editingItem, setEditingItem] = useState<any | null>(null);
+  const [isGlobalOverride, setIsGlobalOverride] = useState(false);
   const [tmdbSearchResults, setTmdbSearchResults] = useState<any[]>([]);
   const [tmdbSearching, setTmdbSearching] = useState(false);
 
@@ -607,7 +608,10 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                                            return (
                                              <div 
                                                key={itemIdx} 
-                                               onClick={() => setEditingItem({ ...item, ...override })}
+                                               onClick={() => {
+                                                 setEditingItem({ ...item, ...override });
+                                                 setIsGlobalOverride(false);
+                                               }}
                                                style={{ 
                                                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', 
                                                  opacity: hiddenCategories.includes(cat.id) ? 0.3 : 1,
@@ -796,14 +800,40 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
             </div>
 
             <div style={s.modalFooter}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+                <div 
+                  onClick={() => setIsGlobalOverride(!isGlobalOverride)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 12px', borderRadius: 8, backgroundColor: isGlobalOverride ? 'rgba(59,130,246,0.1)' : 'transparent', border: `1px solid ${isGlobalOverride ? '#3B82F6' : 'rgba(255,255,255,0.1)'}` }}
+                >
+                  <Icon>{isGlobalOverride ? <CheckSquare size={16} color="#3B82F6" /> : <Square size={16} color="rgba(255,255,255,0.5)" />}</Icon>
+                  <span style={{ fontSize: 13, color: isGlobalOverride ? 'white' : 'rgba(255,255,255,0.5)', fontWeight: 'bold' }}>Aplicar Globalmente (Todos os usuários)</span>
+                </div>
+              </div>
               <button 
                 onClick={() => { setEditingItem(null); setTmdbSearchResults([]); }} 
                 style={s.cancelBtn}
               >
-                Fechar
+                Cancelar
               </button>
               <button 
-                onClick={() => { setEditingItem(null); setTmdbSearchResults([]); }} 
+                onClick={async () => { 
+                   if (isGlobalOverride && editingItem) {
+                     await fetch('/api/admin/globalMediaOverride', {
+                       method: 'POST',
+                       headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
+                       body: JSON.stringify({
+                         itemTitle: editingItem.title,
+                         override: {
+                           title: editingItem.title,
+                           thumbnail: editingItem.thumbnail,
+                           description: editingItem.description
+                         }
+                       })
+                     });
+                   }
+                   setEditingItem(null); 
+                   setTmdbSearchResults([]); 
+                }} 
                 style={{ ...s.saveBtn, backgroundColor: '#3B82F6' }}
               >
                 Concluído
