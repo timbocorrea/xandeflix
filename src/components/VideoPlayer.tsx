@@ -17,6 +17,7 @@ interface VideoPlayerProps {
   onPlayNextEpisode?: () => void;
   isMinimized?: boolean;
   onToggleMinimize?: () => void;
+  isPreview?: boolean;
 }
 
 /**
@@ -41,7 +42,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   nextEpisode = null,
   onPlayNextEpisode,
   isMinimized = false,
-  onToggleMinimize
+  onToggleMinimize,
+  isPreview = false
 }) => {
   const layout = useResponsiveLayout();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -435,6 +437,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     player.attachMediaElement(video);
     player.load();
+    video.controls = !isPreview;
     const playResult = player.play();
     if (playResult && typeof playResult.catch === 'function') {
       playResult.catch(() => { /* autoplay blocked, user will click */ });
@@ -484,7 +487,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       const player = videojs(vjsVideo, {
         autoplay: true,
-        controls: true,
+        controls: !isPreview,
         responsive: true,
         fluid: true,
         preload: 'auto',
@@ -535,7 +538,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.style.display = '';
     video.src = streamUrl;
     video.autoplay = true;
-    video.controls = true;
+    video.controls = !isPreview;
 
     const onPlaying = () => setLoading(false);
     const onWaiting = () => setLoading(true);
@@ -580,27 +583,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       animate={{ 
         opacity: 1, 
         scale: 1,
-        width: isMinimized ? minimizedWidth : layout.width,
-        height: isMinimized ? minimizedHeight : layout.height,
+        width: isPreview ? '100%' : (isMinimized ? minimizedWidth : layout.width),
+        height: isPreview ? '100%' : (isMinimized ? minimizedHeight : layout.height),
         borderRadius: isMinimized ? 20 : 0,
       }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-      style={{
+      style={isPreview ? {} : {
         top: isMinimized ? 'auto' : 0,
         left: isMinimized ? 'auto' : 0,
         right: isMinimized ? `max(env(safe-area-inset-right, 0px), ${layout.isMobile ? 12 : 24}px)` : 0,
         bottom: isMinimized ? minimizedBottom : 0,
         aspectRatio: isMinimized ? '16 / 9' : 'auto',
       }}
-      className={`fixed z-[100] bg-black flex items-center justify-center overflow-hidden shadow-2xl ${
+      className={`${isPreview ? 'absolute inset-0' : 'fixed z-[100]'} bg-black flex items-center justify-center overflow-hidden shadow-2xl ${
         isMinimized ? 'border-2 border-white/20' : ''
       } ${
-        isIdle ? 'cursor-none' : ''
+        isIdle && !isPreview ? 'cursor-none' : ''
       }`}
     >
-      <div 
-        className={`absolute z-[110] flex flex-wrap justify-end gap-3 transition-opacity duration-500 delay-100 ${
-          isIdle && !isMinimized ? 'opacity-0 pointer-events-none' : 'opacity-100'
+      {!isPreview && (
+        <div 
+          className={`absolute z-[110] flex flex-wrap justify-end gap-3 transition-opacity duration-500 delay-100 ${
+            isIdle && !isMinimized ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
         style={{
           top: controlSafeTop,
@@ -735,6 +739,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <X className="text-white w-6 h-6 group-hover:rotate-90 transition-transform duration-300" />
         </button>
       </div>
+      )}
 
       {loading && !error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-[105] bg-black/50">

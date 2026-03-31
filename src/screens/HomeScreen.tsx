@@ -29,6 +29,9 @@ const MediaDetailsPage = lazy(() =>
 const CategoryGridView = lazy(() =>
   import('../components/CategoryGridView').then((module) => ({ default: module.CategoryGridView })),
 );
+const LiveTVGrid = lazy(() =>
+  import('../components/LiveTVGrid').then((module) => ({ default: module.LiveTVGrid })),
+);
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -393,13 +396,14 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       <ScrollView 
         ref={scrollRef}
         style={styles.scrollView}
+        scrollEnabled={activeFilter !== 'live'}
         contentContainerStyle={[
           styles.scrollContent,
           layout.isCompact && styles.scrollContentCompact,
           {
             paddingLeft: layout.isDesktop ? layout.sideRailWidth : layout.horizontalPadding,
             paddingRight: layout.horizontalPadding,
-            paddingBottom: layout.bottomNavigationHeight + (layout.isDesktop ? 100 : 28),
+            paddingBottom: activeFilter === 'live' && layout.isDesktop ? 0 : layout.bottomNavigationHeight + (layout.isDesktop ? 100 : 28),
           },
         ]}
         showsVerticalScrollIndicator={false}
@@ -407,6 +411,8 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         {!isSearchMode ? (
           loading && allCategories.length === 0 ? (
             <View style={{ height: 400, backgroundColor: '#111', borderRadius: 20, marginBottom: 40, opacity: 0.3 }} />
+          ) : activeFilter === 'live' && layout.isDesktop ? (
+            null // Hide hero on live desktop view as we have the split column layout
           ) : (
             <HeroSection 
               media={selectedMedia}
@@ -436,12 +442,13 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           </View>
         )}
 
-        {/* Dynamic Media Rows */}
+        {/* Dynamic Media Rows or Live TV Grid */}
         <View
           style={[
             styles.categoriesContainer,
-            isSearchMode && styles.searchCategoriesContainer,
+            (isSearchMode || activeFilter === 'live') && styles.searchCategoriesContainer,
             layout.isCompact && styles.categoriesContainerCompact,
+            activeFilter === 'live' && layout.isDesktop && { marginTop: 0, paddingTop: 0, paddingBottom: 0 }
           ]}
         >
           {loading && allCategories.length === 0 ? (
@@ -449,6 +456,14 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             [1, 2, 3].map((i) => (
               <CategoryRowSkeleton key={i} layout={layout} />
             ))
+          ) : activeFilter === 'live' && layout.isDesktop ? (
+            <Suspense fallback={<View style={{ height: 400, flex: 1, backgroundColor: '#111', borderRadius: 20 }} />}>
+              <LiveTVGrid 
+                categories={allCategories} 
+                layout={layout}
+                onPlayFull={handleMediaPress}
+              />
+            </Suspense>
           ) : isSearchIdle ? (
             <View style={[styles.emptyContainer, layout.isCompact && styles.emptyContainerCompact]}>
               <Text style={[styles.emptyText, layout.isCompact && styles.emptyTextCompact]}>
@@ -498,6 +513,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           style={[
             styles.logo,
             layout.isCompact && styles.logoCompact,
+            activeFilter === 'live' && layout.isDesktop && { opacity: 0, height: 0, width: 0, overflow: 'hidden' },
             { fontSize: layout.isMobile ? 30 : layout.isTablet ? 40 : 56 },
           ]}
         >
