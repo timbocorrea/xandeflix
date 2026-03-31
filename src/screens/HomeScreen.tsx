@@ -32,6 +32,9 @@ const CategoryGridView = lazy(() =>
 const LiveTVGrid = lazy(() =>
   import('../components/LiveTVGrid').then((module) => ({ default: module.LiveTVGrid })),
 );
+const LiveTVMobileBrowser = lazy(() =>
+  import('../components/LiveTVMobileBrowser').then((module) => ({ default: module.LiveTVMobileBrowser })),
+);
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -85,6 +88,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const layout = useResponsiveLayout();
   const isSearchMode = activeFilter === 'search';
   const isSearchIdle = isSearchMode && !searchQuery.trim();
+  const isMobileLiveBrowser = activeFilter === 'live' && layout.isCompact;
 
   // Local UI State
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -159,6 +163,21 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setIsAutoRotating(false);
     setIsDetailsVisible(false);
   }, [isBrowsing]);
+
+  const handleInlineLivePlay = useCallback((media: Media) => {
+    try {
+      if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    } catch (e) {}
+
+    setPlayingMedia(media);
+    setActiveVideoUrl(media.videoUrl);
+    setVideoType(media.type);
+    setIsPlayerMinimized(false);
+    setIsAutoRotating(false);
+    setIsDetailsVisible(false);
+  }, []);
 
   const handleMediaPress = useCallback((media: Media) => {
     if (media.type === 'movie' || media.type === 'series') {
@@ -322,9 +341,15 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       setSearchQuery('');
     }
 
+    if (layout.isCompact && activeFilter === 'live' && filter !== 'live') {
+      setActiveVideoUrl(null);
+      setPlayingMedia(null);
+      setIsPlayerMinimized(false);
+    }
+
     setActiveFilter(filter);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
-  }, [setActiveFilter, setIsAdminMode, setIsSettingsVisible, setSearchQuery]);
+  }, [activeFilter, layout.isCompact, setActiveFilter, setIsAdminMode, setIsSettingsVisible, setSearchQuery]);
 
   const handleSaveSettings = useCallback((url: string, newHiddenIds: string[]) => {
     setHiddenCategoryIds(newHiddenIds);
@@ -384,7 +409,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     : Math.round(layout.width * 0.35 * 9 / 16);
 
   return (
-    <View style={[styles.container, isBrowsing && { flexDirection: 'column' }]}>
+    <View style={[styles.container, (isBrowsing || isMobileLiveBrowser) && { flexDirection: 'column' }]}>
       {/* Loading State Overlay */}
       <AnimatePresence>
         {loading && allCategories.length === 0 && (
@@ -414,7 +439,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         )}
       </AnimatePresence>
 
-      {(!activeVideoUrl || isPlayerMinimized) && (
+      {(isMobileLiveBrowser || !activeVideoUrl || isPlayerMinimized) && (
         layout.isCompact ? (
           <MobileBottomNav
             onSelect={handleMenuSelect}
@@ -430,7 +455,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       )}
       
       {/* ── Browse-while-playing: docked player at top ── */}
-      {isBrowsing && activeVideoUrl && (
+      {isBrowsing && activeVideoUrl && !isMobileLiveBrowser && (
         <View
           style={{
             width: '100%',
@@ -471,6 +496,22 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         </View>
       )}
 
+      {isMobileLiveBrowser ? (
+        <Suspense fallback={<View style={{ flex: 1, backgroundColor: '#050505' }} />}>
+          <LiveTVMobileBrowser
+            categories={filteredCategories}
+            activeMedia={playingMedia?.type === 'live' ? playingMedia : null}
+            activeVideoUrl={playingMedia?.type === 'live' ? activeVideoUrl : null}
+            layout={layout}
+            onSelectChannel={handleInlineLivePlay}
+            onClosePlayer={() => {
+              setActiveVideoUrl(null);
+              setPlayingMedia(null);
+              setIsPlayerMinimized(false);
+            }}
+          />
+        </Suspense>
+      ) : (
       <ScrollView 
         ref={scrollRef}
         style={styles.scrollView}
@@ -573,9 +614,10 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           )}
         </View>
       </ScrollView>
+      )}
 
       {/* Header Branding - Overlays the ScrollView */}
-      {!isBrowsing && (
+      {!isBrowsing && !isMobileLiveBrowser && (
         <View
           style={[
             styles.header,
@@ -725,7 +767,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
       {/* ── Fullscreen player overlay ── */}
       <AnimatePresence>
-        {activeVideoUrl && !isBrowsing && (
+        {activeVideoUrl && !isBrowsing && !isMobileLiveBrowser && (
           <Suspense fallback={null}>
             <VideoPlayer 
               key={activeVideoUrl}

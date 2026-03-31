@@ -40,10 +40,16 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
     );
   }, [currentCategory, searchQuery]);
 
+  const openFullScreen = (media: Media) => {
+    setSelectedMediaId(null);
+    setPreviewMedia(null);
+    onPlayFull(media);
+  };
+
   const handleMediaClick = (media: Media) => {
     if (selectedMediaId === media.id) {
       // Second click: Full screen
-      onPlayFull(media);
+      openFullScreen(media);
     } else {
       // First click: Preview
       setSelectedMediaId(media.id);
@@ -153,7 +159,7 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
             >
               <View style={styles.previewContainer}>
                 <TouchableHighlight 
-                  onPress={() => onPlayFull(previewMedia)}
+                  onPress={() => openFullScreen(previewMedia)}
                   style={styles.playerWrapper}
                 >
                    <VideoPlayer 
@@ -171,7 +177,7 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
                      <Text style={styles.previewTitleSmall}>{previewMedia.title}</Text>
                    </View>
                    <TouchableHighlight
-                     onPress={() => onPlayFull(previewMedia)}
+                     onPress={() => openFullScreen(previewMedia)}
                      underlayColor="#B91C1C"
                      style={styles.fullScreenBtnSmall}
                    >

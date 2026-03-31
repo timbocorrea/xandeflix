@@ -19,6 +19,8 @@ interface VideoPlayerProps {
   onToggleMinimize?: () => void;
   isPreview?: boolean;
   isBrowseMode?: boolean;
+  showChannelSidebar?: boolean;
+  channelBrowserCategories?: Category[];
 }
 
 /**
@@ -45,7 +47,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isMinimized = false,
   onToggleMinimize,
   isPreview = false,
-  isBrowseMode = false
+  isBrowseMode = false,
+  showChannelSidebar = true,
+  channelBrowserCategories,
 }) => {
   const layout = useResponsiveLayout();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -62,6 +66,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Sidebar State
   const { allCategories } = useStore();
+  const sidebarCategories = React.useMemo(
+    () =>
+      (channelBrowserCategories && channelBrowserCategories.length > 0
+        ? channelBrowserCategories
+        : allCategories
+      ).filter((category) => category.items.length > 0),
+    [channelBrowserCategories, allCategories]
+  );
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = React.useState<string | null>(null);
   const [channelSearchQuery, setChannelSearchQuery] = React.useState('');
@@ -95,10 +107,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Set initial category when sidebar opens or categories load
   useEffect(() => {
-    if (allCategories.length > 0 && !selectedCategoryId) {
-      setSelectedCategoryId(allCategories[0].id);
+    if (sidebarCategories.length > 0 && !selectedCategoryId) {
+      setSelectedCategoryId(sidebarCategories[0].id);
     }
-  }, [allCategories, selectedCategoryId]);
+  }, [sidebarCategories, selectedCategoryId]);
+
+  useEffect(() => {
+    if (!showChannelSidebar && isSidebarOpen) {
+      setIsSidebarOpen(false);
+    }
+  }, [showChannelSidebar, isSidebarOpen]);
 
   // Auto-update strategy if the stream URL changes due to quality switch
   useEffect(() => {
@@ -321,10 +339,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const goToAdjacentChannel = React.useCallback((direction: 1 | -1) => {
-    if (!internalMedia || !allCategories.length) return;
+    if (!internalMedia || !sidebarCategories.length) return;
 
     // Find the category containing the current media
-    const currentCategory = allCategories.find(cat => 
+    const currentCategory = sidebarCategories.find(cat => 
       cat.items.some(item => item.id === internalMedia.id)
     );
 
@@ -346,7 +364,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setLoading(true);
       setError(null);
     }
-  }, [internalMedia, allCategories]);
+  }, [internalMedia, sidebarCategories]);
 
   // ── Cleanup on unmount ──
   useEffect(() => {
@@ -404,11 +422,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (internalMedia?.type === 'live') goToAdjacentChannel(-1);
         else skipTime(-10);
       }
-      else if (e.key === 'm' || e.key === 'M') setIsSidebarOpen(!isSidebarOpen);
+      else if (showChannelSidebar && (e.key === 'm' || e.key === 'M')) setIsSidebarOpen(!isSidebarOpen);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSidebarOpen, skipTime, onClose]);
+  }, [isSidebarOpen, skipTime, onClose, showChannelSidebar, internalMedia, goToAdjacentChannel]);
 
   // ── mpegts.js for raw MPEG-TS streams ──
   function initMpegTs(video: HTMLVideoElement) {
@@ -724,15 +742,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </button>
         )}
 
-        <button 
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className={`p-3 backdrop-blur-xl border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg ${
-            isSidebarOpen ? 'bg-red-600 text-white' : 'bg-black/40 text-white hover:bg-white/10'
-          }`}
-          title="Lista de Canais"
-        >
-          <Menu className={`w-6 h-6 transition-transform duration-300 ${isSidebarOpen ? 'rotate-90' : ''}`} />
-        </button>
+        {showChannelSidebar && (
+          <button 
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className={`p-3 backdrop-blur-xl border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg ${
+              isSidebarOpen ? 'bg-red-600 text-white' : 'bg-black/40 text-white hover:bg-white/10'
+            }`}
+            title="Lista de Canais"
+          >
+            <Menu className={`w-6 h-6 transition-transform duration-300 ${isSidebarOpen ? 'rotate-90' : ''}`} />
+          </button>
+        )}
         <button 
           onClick={onClose}
           className="p-3 backdrop-blur-xl bg-black/40 hover:bg-red-500/20 border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg"
@@ -812,7 +832,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Auto-Play Countdown Overlay */}
       {/* Channel Sidebar Menu */}
       <AnimatePresence>
-        {isSidebarOpen && (
+        {showChannelSidebar && isSidebarOpen && (
           <>
             {/* Light backdrop (transparent, no blur to see content) */}
             <motion.div 
@@ -885,7 +905,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   className="border-r border-white/5 bg-black/20 overflow-y-auto custom-scrollbar"
                   onMouseEnter={() => setActiveSidebarColumn('categories')}
                 >
-                  {allCategories.map((cat) => (
+                  {sidebarCategories.map((cat) => (
                     <button
                       key={cat.id}
                       onClick={() => {
@@ -894,13 +914,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       }}
                       onMouseEnter={() => setSelectedCategoryId(cat.id)}
                       className={`w-full text-left px-8 py-5 transition-all relative flex items-center justify-between group ${
-                        (selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === allCategories[0]?.id))
+                        (selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === sidebarCategories[0]?.id))
                           ? 'bg-red-600/10 text-white font-bold'
                           : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
                       }`}
                     >
                       <span className="truncate pr-2">{cat.title}</span>
-                      {(selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === allCategories[0]?.id)) && (
+                      {(selectedCategoryId === cat.id || (!selectedCategoryId && cat.id === sidebarCategories[0]?.id)) && (
                         <motion.div layoutId="activeCat" className="absolute left-0 top-0 bottom-0 w-1 bg-red-600 shadow-[0_0_10px_rgba(229,9,20,0.5)]" />
                       )}
                       
@@ -926,7 +946,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 >
                   <div className="p-2">
                     {(() => {
-                      const activeCat = allCategories.find(c => c.id === (selectedCategoryId || allCategories[0]?.id));
+                      const activeCat = sidebarCategories.find(c => c.id === (selectedCategoryId || sidebarCategories[0]?.id));
                       if (!activeCat) return null;
 
                       const filteredItems = activeCat.items.filter(item => 
