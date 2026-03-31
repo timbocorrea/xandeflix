@@ -170,11 +170,19 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   useEffect(() => {
     if (allCategories.length === 0) return;
     
-    // Exclude live channels from hero slideshow across all views
-    let sourceCats = allCategories.filter(cat => cat.type !== 'live');
+    const useLiveHeroPool = activeFilter === 'live';
+    let sourceCats = allCategories.filter((cat) =>
+      useLiveHeroPool ? cat.type === 'live' : cat.type !== 'live'
+    );
     
     // For specific tabs, further filter by the active type
-    if (activeFilter !== 'home' && activeFilter !== 'all' && activeFilter !== 'search' && activeFilter !== 'mylist') {
+    if (
+      activeFilter !== 'home' &&
+      activeFilter !== 'all' &&
+      activeFilter !== 'search' &&
+      activeFilter !== 'mylist' &&
+      activeFilter !== 'live'
+    ) {
       sourceCats = sourceCats.filter(cat => cat.type === activeFilter);
     }
     
