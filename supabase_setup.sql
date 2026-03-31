@@ -15,7 +15,10 @@ CREATE TABLE IF NOT EXISTS public.xandeflix_users (
     is_blocked BOOLEAN DEFAULT false,
     last_access TIMESTAMP WITH TIME ZONE,
     role TEXT DEFAULT 'user',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    hidden_categories JSONB DEFAULT '[]'::jsonb,
+    category_overrides JSONB DEFAULT '{}'::jsonb,
+    media_overrides JSONB DEFAULT '{}'::jsonb
 );
 
 -- Inserindo usuario administrador padrao com hash bcrypt compativel.

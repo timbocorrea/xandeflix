@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Trash2, X, Edit2, Save, Eye, ChevronDown, ChevronRight, Folder, FolderOpen, Tv, Film, Clapperboard, FileVideo, Square, CheckSquare } from 'lucide-react';
+import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Trash2, X, Edit2, Save, Eye, ChevronDown, ChevronRight, Folder, FolderOpen, Tv, Film, Clapperboard, FileVideo, Square, CheckSquare, Search, Image as ImageIcon, FileText } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 // Wrapper to isolate lucide icons from react-native-web's createElement
@@ -31,7 +31,13 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
   const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string>>({});
+  const [mediaOverrides, setMediaOverrides] = useState<Record<string, any>>({});
   const [savingHidden, setSavingHidden] = useState(false);
+
+  // Item Specific Metadata Modal
+  const [editingItem, setEditingItem] = useState<any | null>(null);
+  const [tmdbSearchResults, setTmdbSearchResults] = useState<any[]>([]);
+  const [tmdbSearching, setTmdbSearching] = useState(false);
 
   const handlePreviewUser = async (user: any) => {
     setPreviewingUser(user);
@@ -40,6 +46,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setExpandedCategory(null);
     setHiddenCategories(user.hiddenCategories || []);
     setCategoryOverrides(user.categoryOverrides || {});
+    setMediaOverrides(user.mediaOverrides || {});
     setPreviewLoading(true);
     try {
       const response = await fetch(`/api/admin/user/${user.id}/categories`, {
@@ -72,13 +79,18 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
           body: JSON.stringify({ overrides: categoryOverrides })
+        }),
+        fetch(`/api/admin/user/${previewingUser.id}/mediaOverrides`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
+          body: JSON.stringify({ overrides: mediaOverrides })
         })
       ]);
 
       if (!hiddenRes.ok || !overridesRes.ok) throw new Error('Não foi possível salvar os filtros remotos.');
       
       const updatedManagedUsers = managedUsers.map(u => 
-        u.id === previewingUser.id ? { ...u, hiddenCategories, categoryOverrides } : u
+        u.id === previewingUser.id ? { ...u, hiddenCategories, categoryOverrides, mediaOverrides } : u
       );
       setManagedUsers(updatedManagedUsers);
       alert('Filtros e modificações salvos com sucesso!');
@@ -104,6 +116,55 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
       return fallback;
     }
   }, []);
+
+  const searchTmdb = async (query: string, type: 'movie' | 'series') => {
+    if (!query) return;
+    setTmdbSearching(true);
+    try {
+      const resp = await fetch(`/api/tmdb/search?query=${encodeURIComponent(query)}&type=${type}`);
+      const data = await resp.json();
+      setTmdbSearchResults(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error('TMDB Search Error:', e);
+    } finally {
+      setTmdbSearching(false);
+    }
+  };
+
+  const applyTmdbMetadata = (meta: any) => {
+    if (!editingItem) return;
+    const updated = {
+      ...editingItem,
+      title: meta.title,
+      thumbnail: meta.poster_path ? `https://image.tmdb.org/t/p/w500${meta.poster_path}` : editingItem.thumbnail,
+      description: meta.overview || editingItem.description,
+    };
+    setEditingItem(updated);
+    
+    // Auto save to local mediaOverrides
+    setMediaOverrides(prev => ({
+      ...prev,
+      [editingItem.url]: {
+        title: updated.title,
+        thumbnail: updated.thumbnail,
+        description: updated.description
+      }
+    }));
+    setTmdbSearchResults([]);
+  };
+
+  const handleUpdateMediaOverride = (field: string, value: string) => {
+    if (!editingItem) return;
+    const updated = { ...editingItem, [field]: value };
+    setEditingItem(updated);
+    setMediaOverrides(prev => ({
+      ...prev,
+      [editingItem.url]: {
+        ...prev[editingItem.url],
+        [field]: value
+      }
+    }));
+  };
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -438,9 +499,9 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
             <div style={s.modalHeader}>
               <div>
                  <h2 style={s.modalTitle}>Categorias de {previewingUser.name}</h2>
-                 <p style={{ color: 'rgba(255,255,255,0.5)', margin: '4px 0 0 0', fontSize: 14 }}>
+                 {/* <p style={{ color: 'rgba(255,255,255,0.5)', margin: '4px 0 0 0', fontSize: 14 }}>
                    {previewingUser.playlistUrl || 'Nenhuma lista vinculada'}
-                 </p>
+                 </p> */}
               </div>
               <button 
                 onClick={() => {
@@ -540,12 +601,27 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                                      {/* Item Level (Files) */}
                                      {isCatExpanded && cat.items && cat.items.length > 0 && (
                                        <div style={{ paddingLeft: 44, display: 'flex', flexDirection: 'column', gap: 2, paddingBottom: 12, paddingTop: 4 }}>
-                                         {cat.items.slice(0, 500).map((itemTitle: string, itemIdx: number) => (
-                                           <div key={itemIdx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', opacity: hiddenCategories.includes(cat.id) ? 0.3 : 1 }}>
-                                             <Icon><FileVideo size={14} color="rgba(255,255,255,0.2)" /></Icon>
-                                             <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14 }}>{itemTitle}</span>
-                                           </div>
-                                         ))}
+                                         {cat.items.slice(0, 500).map((item: any, itemIdx: number) => {
+                                           const override = mediaOverrides[item.url] || {};
+                                           const displayTitle = override.title || item.title;
+                                           return (
+                                             <div 
+                                               key={itemIdx} 
+                                               onClick={() => setEditingItem({ ...item, ...override })}
+                                               style={{ 
+                                                 display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', 
+                                                 opacity: hiddenCategories.includes(cat.id) ? 0.3 : 1,
+                                                 cursor: 'pointer', borderRadius: 4, transition: 'background 0.2s'
+                                               }}
+                                               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+                                               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                                             >
+                                               <Icon><FileVideo size={14} color={override.title ? "#3B82F6" : "rgba(255,255,255,0.2)"} /></Icon>
+                                               <span style={{ color: override.title ? '#3B82F6' : 'rgba(255,255,255,0.6)', fontSize: 14 }}>{displayTitle}</span>
+                                               {override.thumbnail && <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#3B82F6' }} title="Modificado pelo Admin" />}
+                                             </div>
+                                           );
+                                         })}
                                          {cat.items.length > 500 && (
                                            <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, paddingLeft: 22, fontStyle: 'italic', marginTop: 4 }}>
                                              + {cat.items.length - 500} arquivos não exibidos para economizar memória
@@ -581,6 +657,156 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                 style={{ ...s.saveBtn, backgroundColor: savingHidden ? 'rgba(59,130,246,0.5)' : '#3B82F6', cursor: savingHidden ? 'not-allowed' : 'pointer' }}>
                 <Icon><Save size={18} color="white" /></Icon>
                 {savingHidden ? 'Salvando...' : 'Salvar Filtros'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Media Item Detail / Metadata Editor Modal */}
+      {editingItem && (
+        <div style={{ ...s.modalOverlay, zIndex: 1100 }}>
+          <div style={{ ...s.modal, width: 900, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={s.modalHeader}>
+              <h2 style={s.modalTitle}>Editar Metadados</h2>
+              <button onClick={() => { setEditingItem(null); setTmdbSearchResults([]); }} style={s.closeBtn}>
+                <Icon><X size={24} color="white" /></Icon>
+              </button>
+            </div>
+            
+            <div style={{ ...s.modalBody, overflowY: 'auto', flex: 1 }}>
+              <div style={{ display: 'flex', gap: 30 }}>
+                {/* Preview / Image Section */}
+                <div style={{ width: 260, flexShrink: 0 }}>
+                  <label style={s.label}>Capa Atual</label>
+                  <div style={{ 
+                    width: '100%', aspectRatio: '2/3', backgroundColor: 'rgba(255,255,255,0.05)', 
+                    borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)',
+                    position: 'relative', marginTop: 10
+                  }}>
+                    {editingItem.thumbnail ? (
+                      <img src={editingItem.thumbnail} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.2)' }}>
+                        <ImageIcon size={48} />
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 20 }}>
+                    <label style={s.label}>URL da Imagem</label>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <input 
+                        style={{ ...s.input, flex: 1, fontSize: 13, height: 38, padding: '0 12px' }} 
+                        value={editingItem.thumbnail || ''} 
+                        onChange={e => handleUpdateMediaOverride('thumbnail', e.target.value)}
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Form Section */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  <div style={s.inputGroup}>
+                    <label style={s.label}>Título do Arquivo</label>
+                    <input 
+                      style={s.input} 
+                      value={editingItem.title} 
+                      onChange={e => handleUpdateMediaOverride('title', e.target.value)}
+                    />
+                  </div>
+
+                  <div style={s.inputGroup}>
+                    <label style={s.label}>Descrição / Sinopse</label>
+                    <textarea 
+                      style={{ ...s.input, minHeight: 120, resize: 'vertical', lineHeight: '1.5' }} 
+                      value={editingItem.description || ''} 
+                      onChange={e => handleUpdateMediaOverride('description', e.target.value)}
+                    />
+                  </div>
+
+                  {/* TMDB Integration Section */}
+                  <div style={{ 
+                    backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 16, padding: 20, 
+                    border: '1px solid rgba(255,255,255,0.05)', marginTop: 10 
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 15 }}>
+                      <Search size={18} color="#00BBFF" />
+                      <span style={{ fontWeight: 900, fontSize: 13, color: '#00BBFF', letterSpacing: 0.5 }}>BUSCAR NO TMDB</span>
+                    </div>
+                    
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <button 
+                        onClick={() => searchTmdb(editingItem.title, 'movie')}
+                        disabled={tmdbSearching}
+                        style={{ 
+                          flex: 1, height: 40, borderRadius: 8, border: '1px solid rgba(0,187,255,0.3)', 
+                          backgroundColor: 'rgba(0,187,255,0.1)', color: '#00BBFF', fontWeight: 800, fontSize: 12,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {tmdbSearching ? 'Buscando...' : 'Buscar como Filme'}
+                      </button>
+                      <button 
+                        onClick={() => searchTmdb(editingItem.title, 'series')}
+                        disabled={tmdbSearching}
+                        style={{ 
+                          flex: 1, height: 40, borderRadius: 8, border: '1px solid rgba(168,85,247,0.3)', 
+                          backgroundColor: 'rgba(168,85,247,0.1)', color: '#C084FC', fontWeight: 800, fontSize: 12,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {tmdbSearching ? 'Buscando...' : 'Buscar como Série'}
+                      </button>
+                    </div>
+
+                    {tmdbSearchResults.length > 0 && (
+                      <div style={{ 
+                        marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', 
+                        gap: 12, maxHeight: 250, overflowY: 'auto', paddingRight: 10
+                      }}>
+                        {tmdbSearchResults.map((res: any) => (
+                          <div 
+                            key={res.id} 
+                            onClick={() => applyTmdbMetadata(res)}
+                            style={{ 
+                              cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)',
+                              transition: 'transform 0.2s, border-color 0.2s', position: 'relative'
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.borderColor = '#00BBFF'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+                          >
+                            <img 
+                              src={res.poster_path ? `https://image.tmdb.org/t/p/w185${res.poster_path}` : 'https://via.placeholder.com/130x195?text=Sem+Poster'} 
+                              style={{ width: '100%', display: 'block' }} 
+                            />
+                            <div style={{ 
+                              position: 'absolute', bottom: 0, left: 0, right: 0, 
+                              background: 'linear-gradient(transparent, black)', padding: '10px 6px',
+                              fontSize: 10, color: 'white', fontWeight: 'bold', textAlign: 'center'
+                            }}>
+                              {res.title || res.name}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={s.modalFooter}>
+              <button 
+                onClick={() => { setEditingItem(null); setTmdbSearchResults([]); }} 
+                style={s.cancelBtn}
+              >
+                Fechar
+              </button>
+              <button 
+                onClick={() => { setEditingItem(null); setTmdbSearchResults([]); }} 
+                style={{ ...s.saveBtn, backgroundColor: '#3B82F6' }}
+              >
+                Concluído
               </button>
             </div>
           </div>

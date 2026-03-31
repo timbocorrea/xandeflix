@@ -190,6 +190,7 @@ app.get('/api/playlist', async (req, res) => {
   let playlistUrl = '';
   let hiddenCategories: string[] = [];
   let categoryOverrides: Record<string, string> = {};
+  let mediaOverrides: Record<string, any> = {};
   console.log(`[API] Playlist request. Session: ${JSON.stringify(session)}`);
   
   if (session?.role === 'user' && session.userId) {
@@ -206,6 +207,7 @@ app.get('/api/playlist', async (req, res) => {
     playlistUrl = user.playlistUrl || '';
     hiddenCategories = user.hiddenCategories || [];
     categoryOverrides = user.categoryOverrides || {};
+    mediaOverrides = user.mediaOverrides || {};
     if (playlistUrl) {
       registerAuthorizedDomainFromUrl(playlistUrl);
     }
@@ -229,6 +231,15 @@ app.get('/api/playlist', async (req, res) => {
       result = result.map(c => 
         categoryOverrides[c.id] ? { ...c, type: categoryOverrides[c.id] } : c
       );
+    }
+    
+    if (Object.keys(mediaOverrides).length > 0) {
+      result = result.map(c => ({
+        ...c,
+        items: c.items?.map((i: any) => 
+          mediaOverrides[i.url] ? { ...i, ...mediaOverrides[i.url] } : i
+        )
+      }));
     }
     
     return res.json(result);
@@ -577,7 +588,14 @@ app.get('/api/admin/user/:id/categories', adminAuthMiddleware, async (req, res) 
       title: cat.title,
       type: cat.type,
       itemCount: cat.items ? cat.items.length : 0,
-      items: cat.items ? cat.items.map((i: any) => i.title) : []
+      // Send more details but limit count to avoid crashing the browser with huge playlists
+      items: cat.items ? cat.items.slice(0, 1000).map((i: any) => ({
+        title: i.title,
+        url: i.url,
+        thumbnail: i.thumbnail,
+        description: i.description,
+        type: i.type
+      })) : []
     }));
 
     res.json(summary);
@@ -619,6 +637,24 @@ app.post('/api/admin/user/:id/categoryOverrides', adminAuthMiddleware, async (re
     }
   } catch (err: any) {
     console.error(`[ADMIN] Erro ao salvar overrides de categorias:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/user/:id/mediaOverrides', adminAuthMiddleware, async (req, res) => {
+  try {
+    const { overrides } = req.body;
+    if (typeof overrides !== 'object' || overrides === null) {
+      return res.status(400).json({ error: 'overrides must be an object' });
+    }
+    const success = await AdminService.updateMediaOverrides(req.params.id, overrides);
+    if (success) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'Usuário não encontrado ou erro ao salvar no banco' });
+    }
+  } catch (err: any) {
+    console.error(`[ADMIN] Erro ao salvar overrides de mídia:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -14,6 +14,7 @@ export interface UserRecord {
   lastAccess?: string;
   hiddenCategories?: string[];
   categoryOverrides?: Record<string, string>;
+  mediaOverrides?: Record<string, any>;
 }
 
 interface SupabaseUserRow {
@@ -28,6 +29,7 @@ interface SupabaseUserRow {
   created_at?: string | null;
   hidden_categories?: string[] | null;
   category_overrides?: Record<string, string> | null;
+  media_overrides?: Record<string, any> | null;
 }
 
 const USERS_FILE = path.join(process.cwd(), 'users.json');
@@ -96,6 +98,7 @@ export class AdminService {
       lastAccess: user.last_access || undefined,
       hiddenCategories: user.hidden_categories || [],
       categoryOverrides: user.category_overrides || {},
+      mediaOverrides: user.media_overrides || {},
     };
   }
 
@@ -159,6 +162,9 @@ export class AdminService {
         }
         if (!pUser.categoryOverrides || Object.keys(pUser.categoryOverrides).length === 0) {
           pUser.categoryOverrides = sUser.categoryOverrides;
+        }
+        if (!pUser.mediaOverrides || Object.keys(pUser.mediaOverrides).length === 0) {
+          pUser.mediaOverrides = sUser.mediaOverrides;
         }
       }
     }
@@ -441,6 +447,9 @@ export class AdminService {
            if (!supabaseUser.categoryOverrides || Object.keys(supabaseUser.categoryOverrides).length === 0) {
              supabaseUser.categoryOverrides = localUser.categoryOverrides;
            }
+           if (!supabaseUser.mediaOverrides || Object.keys(supabaseUser.mediaOverrides).length === 0) {
+             supabaseUser.mediaOverrides = localUser.mediaOverrides;
+           }
         }
       }
       return supabaseUser;
@@ -570,6 +579,44 @@ export class AdminService {
       this.users[localIndex].categoryOverrides = overrides;
       this.saveUsers();
       console.log(`[ADMIN] User category overrides updated locally for ${userId}`);
+      return true;
+    }
+
+    return false;
+  }
+
+  public static async updateMediaOverrides(userId: string, overrides: Record<string, any>): Promise<boolean> {
+    this.initialize();
+
+    if (this.isUuid(userId)) {
+      try {
+        if (!supabase) throw new Error('Supabase indisponível');
+
+        const { data, error } = await supabase
+          .from('xandeflix_users')
+          .update({ media_overrides: overrides })
+          .eq('id', userId)
+          .select('*')
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (data) {
+          this.syncLocalUser(userId, { mediaOverrides: overrides });
+          console.log(`[ADMIN] User media overrides updated in Supabase for ${userId}. Keys: ${Object.keys(overrides).length}`);
+          return true;
+        }
+      } catch (err: any) {
+        console.error(`[ADMIN] Warning: Could not update media_overrides in Supabase for ${userId}.:`, err.message);
+        if (!this.canFallbackToLocal()) throw err;
+      }
+    }
+
+    const localIndex = this.users.findIndex((u) => u.id === userId);
+    if (localIndex !== -1) {
+      this.users[localIndex].mediaOverrides = overrides;
+      this.saveUsers();
+      console.log(`[ADMIN] User media overrides updated locally for ${userId}`);
       return true;
     }
 
@@ -797,6 +844,9 @@ export class AdminService {
               }
               if (!mappedUser.categoryOverrides || Object.keys(mappedUser.categoryOverrides).length === 0) {
                 mappedUser.categoryOverrides = localFallback.categoryOverrides;
+              }
+              if (!mappedUser.mediaOverrides || Object.keys(mappedUser.mediaOverrides).length === 0) {
+                mappedUser.mediaOverrides = localFallback.mediaOverrides;
               }
             }
           }
