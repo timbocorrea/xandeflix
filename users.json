@@ -24,6 +24,12 @@
     "password": "$2b$10$qSO.CZPdKNFb6AaVuSgdy.cfRzU8JS/TLV0cxuLRZ.i3DOTGoLSRa",
     "playlistUrl": "https://real.cdnbr.site/get.php?username=837181487&password=841265864&type=m3u_plus&output=mpegts",
     "isBlocked": false,
-    "lastAccess": "2026-03-30T15:41:23.957Z"
+    "lastAccess": "2026-03-30T15:41:23.957Z",
+    "categoryOverrides": {
+      "canais-i-sess-o-cinema": "live",
+      "cine-filmes-hd-24hrs": "live",
+      "cinema-ruim-cam-propaganda": "live"
+    },
+    "hiddenCategories": []
   }
 ]

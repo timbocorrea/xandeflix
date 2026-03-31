@@ -13,6 +13,7 @@ export interface UserRecord {
   role?: string;
   lastAccess?: string;
   hiddenCategories?: string[];
+  categoryOverrides?: Record<string, string>;
 }
 
 interface SupabaseUserRow {
@@ -26,6 +27,7 @@ interface SupabaseUserRow {
   last_access?: string | null;
   created_at?: string | null;
   hidden_categories?: string[] | null;
+  category_overrides?: Record<string, string> | null;
 }
 
 const USERS_FILE = path.join(process.cwd(), 'users.json');
@@ -93,6 +95,7 @@ export class AdminService {
       role: user.role || 'user',
       lastAccess: user.last_access || undefined,
       hiddenCategories: user.hidden_categories || [],
+      categoryOverrides: user.category_overrides || {},
     };
   }
 
@@ -504,6 +507,44 @@ export class AdminService {
       this.users[localIndex].hiddenCategories = categories;
       this.saveUsers();
       console.log(`[ADMIN] User hidden categories updated locally for ${userId}`);
+      return true;
+    }
+
+    return false;
+  }
+
+  public static async updateCategoryOverrides(userId: string, overrides: Record<string, string>): Promise<boolean> {
+    this.initialize();
+
+    if (this.isUuid(userId)) {
+      try {
+        if (!supabase) throw new Error('Supabase indisponível');
+
+        const { data, error } = await supabase
+          .from('xandeflix_users')
+          .update({ category_overrides: overrides })
+          .eq('id', userId)
+          .select('*')
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (data) {
+          this.syncLocalUser(userId, { categoryOverrides: overrides });
+          console.log(`[ADMIN] User category overrides updated in Supabase for ${userId}. Count: ${Object.keys(overrides).length}`);
+          return true;
+        }
+      } catch (err: any) {
+        console.error(`[ADMIN] Warning: Could not update category_overrides in Supabase for ${userId} (probably column missing):`, err.message);
+        if (!this.canFallbackToLocal()) throw err;
+      }
+    }
+
+    const localIndex = this.users.findIndex((u) => u.id === userId);
+    if (localIndex !== -1) {
+      this.users[localIndex].categoryOverrides = overrides;
+      this.saveUsers();
+      console.log(`[ADMIN] User category overrides updated locally for ${userId}`);
       return true;
     }
 

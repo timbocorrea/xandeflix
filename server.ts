@@ -189,6 +189,7 @@ app.get('/api/playlist', async (req, res) => {
   const session = AuthSessionService.getSession(getRequestAuthToken(req));
   let playlistUrl = '';
   let hiddenCategories: string[] = [];
+  let categoryOverrides: Record<string, string> = {};
   console.log(`[API] Playlist request. Session: ${JSON.stringify(session)}`);
   
   if (session?.role === 'user' && session.userId) {
@@ -204,6 +205,7 @@ app.get('/api/playlist', async (req, res) => {
 
     playlistUrl = user.playlistUrl || '';
     hiddenCategories = user.hiddenCategories || [];
+    categoryOverrides = user.categoryOverrides || {};
     if (playlistUrl) {
       registerAuthorizedDomainFromUrl(playlistUrl);
     }
@@ -217,11 +219,19 @@ app.get('/api/playlist', async (req, res) => {
   }
 
   const sendFilteredCategories = (categories: any[]) => {
+    let result = categories;
+    
     if (hiddenCategories.length > 0) {
-      const filtered = categories.filter(c => !hiddenCategories.includes(c.id));
-      return res.json(filtered);
+      result = result.filter(c => !hiddenCategories.includes(c.id));
     }
-    return res.json(categories);
+    
+    if (Object.keys(categoryOverrides).length > 0) {
+      result = result.map(c => 
+        categoryOverrides[c.id] ? { ...c, type: categoryOverrides[c.id] } : c
+      );
+    }
+    
+    return res.json(result);
   };
 
   // Auto-register playlist domain (URLs come from DB or env, so they are trusted)
@@ -591,6 +601,24 @@ app.post('/api/admin/user/:id/hiddenCategories', adminAuthMiddleware, async (req
     }
   } catch (err: any) {
     console.error(`[ADMIN] Erro ao salvar categorias ocultas:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/user/:id/categoryOverrides', adminAuthMiddleware, async (req, res) => {
+  try {
+    const { overrides } = req.body;
+    if (typeof overrides !== 'object' || overrides === null) {
+      return res.status(400).json({ error: 'overrides must be an object' });
+    }
+    const success = await AdminService.updateCategoryOverrides(req.params.id, overrides);
+    if (success) {
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'Usuário não encontrado ou erro ao salvar no banco' });
+    }
+  } catch (err: any) {
+    console.error(`[ADMIN] Erro ao salvar overrides de categorias:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });

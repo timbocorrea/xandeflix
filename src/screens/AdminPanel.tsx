@@ -30,6 +30,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   const [expandedRoot, setExpandedRoot] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
+  const [categoryOverrides, setCategoryOverrides] = useState<Record<string, string>>({});
   const [savingHidden, setSavingHidden] = useState(false);
 
   const handlePreviewUser = async (user: any) => {
@@ -38,6 +39,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setExpandedRoot(null);
     setExpandedCategory(null);
     setHiddenCategories(user.hiddenCategories || []);
+    setCategoryOverrides(user.categoryOverrides || {});
     setPreviewLoading(true);
     try {
       const response = await fetch(`/api/admin/user/${user.id}/categories`, {
@@ -60,17 +62,26 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     if (!previewingUser) return;
     setSavingHidden(true);
     try {
-      const response = await fetch(`/api/admin/user/${previewingUser.id}/hiddenCategories`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-        body: JSON.stringify({ categories: hiddenCategories })
-      });
-      if (!response.ok) throw new Error('Não foi possível salvar os filtros.');
+      const [hiddenRes, overridesRes] = await Promise.all([
+        fetch(`/api/admin/user/${previewingUser.id}/hiddenCategories`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
+          body: JSON.stringify({ categories: hiddenCategories })
+        }),
+        fetch(`/api/admin/user/${previewingUser.id}/categoryOverrides`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
+          body: JSON.stringify({ overrides: categoryOverrides })
+        })
+      ]);
+
+      if (!hiddenRes.ok || !overridesRes.ok) throw new Error('Não foi possível salvar os filtros remotos.');
+      
       const updatedManagedUsers = managedUsers.map(u => 
-        u.id === previewingUser.id ? { ...u, hiddenCategories } : u
+        u.id === previewingUser.id ? { ...u, hiddenCategories, categoryOverrides } : u
       );
       setManagedUsers(updatedManagedUsers);
-      alert('Filtros salvos com sucesso!');
+      alert('Filtros e modificações salvos com sucesso!');
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -453,65 +464,78 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                       { id: 'live', label: 'TV AO VIVO', icon: <Tv size={18} />, color: '#F87171', bg: 'rgba(239,68,68,0.1)' },
                       { id: 'series', label: 'SÉRIES', icon: <Clapperboard size={18} />, color: '#C084FC', bg: 'rgba(168,85,247,0.1)' },
                       { id: 'movie', label: 'FILMES', icon: <Film size={18} />, color: '#60A5FA', bg: 'rgba(59,130,246,0.1)' }
-                    ].map(root => {
-                       const rootCategories = previewCategories.filter(c => c.type === root.id);
-                       if (rootCategories.length === 0) return null;
-                       const isRootExpanded = expandedRoot === root.id;
-                       
-                       return (
-                         <div key={root.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                           {/* Root Level (Type) */}
-                           <div 
-                             onClick={() => setExpandedRoot(isRootExpanded ? null : root.id)}
-                             style={{
-                               display: 'flex', alignItems: 'center', gap: 12, padding: 16,
-                               backgroundColor: root.bg, border: `1px solid ${root.color}40`, borderRadius: 8, cursor: 'pointer'
-                             }}>
-                             <Icon>
-                               {isRootExpanded ? <ChevronDown size={20} color={root.color} /> : <ChevronRight size={20} color={root.color} />}
-                             </Icon>
-                             <Icon>{root.icon}</Icon>
-                             <span style={{ fontWeight: 900, color: root.color, flex: 1, letterSpacing: 1 }}>{root.label}</span>
-                             <span style={{ color: root.color, opacity: 0.8, fontSize: 13, fontWeight: 'bold' }}>
-                               {rootCategories.length} pastas
-                             </span>
-                           </div>
+                       ].map(root => {
+                          const rootCategories = previewCategories.filter(c => (categoryOverrides[c.id] || c.type) === root.id);
+                          if (rootCategories.length === 0) return null;
+                          const isRootExpanded = expandedRoot === root.id;
+                          
+                          return (
+                            <div key={root.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              {/* Root Level (Type) */}
+                              <div 
+                                onClick={() => setExpandedRoot(isRootExpanded ? null : root.id)}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 12, padding: 16,
+                                  backgroundColor: root.bg, border: `1px solid ${root.color}40`, borderRadius: 8, cursor: 'pointer'
+                                }}>
+                                <Icon>
+                                  {isRootExpanded ? <ChevronDown size={20} color={root.color} /> : <ChevronRight size={20} color={root.color} />}
+                                </Icon>
+                                <Icon>{root.icon}</Icon>
+                                <span style={{ fontWeight: 900, color: root.color, flex: 1, letterSpacing: 1 }}>{root.label}</span>
+                                <span style={{ color: root.color, opacity: 0.8, fontSize: 13, fontWeight: 'bold' }}>
+                                  {rootCategories.length} pastas
+                                </span>
+                              </div>
 
-                           {/* Category Level (Folders) */}
-                           {isRootExpanded && (
-                             <div style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, marginBottom: 12 }}>
-                               {rootCategories.map((cat: any, idx: number) => {
-                                 const isCatExpanded = expandedCategory === cat.id;
-                                 return (
-                                   <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                     <div
-                                       onClick={() => setExpandedCategory(isCatExpanded ? null : cat.id)}
-                                       style={{
-                                         display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-                                         backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, cursor: 'pointer',
-                                         opacity: hiddenCategories.includes(cat.id) ? 0.4 : 1
-                                       }}>
-                                       <div 
-                                         onClick={(e) => toggleCategoryVisibility(cat.id, e)}
-                                         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}
-                                       >
-                                         <Icon>
-                                           {hiddenCategories.includes(cat.id) ? (
-                                             <Square size={20} color="rgba(255,255,255,0.3)" />
-                                           ) : (
-                                             <CheckSquare size={20} color="#3B82F6" />
-                                           )}
-                                         </Icon>
-                                       </div>
-                                       <Icon>
-                                         {isCatExpanded ? <ChevronDown size={16} color="white" /> : <ChevronRight size={16} color="white" />}
-                                       </Icon>
-                                       <Icon>
-                                         {isCatExpanded ? <FolderOpen size={18} color="#E5A00D" fill="#E5A00D" fillOpacity={0.2} /> : <Folder size={18} color="#E5A00D" fill="#E5A00D" fillOpacity={0.2} />}
-                                       </Icon>
-                                       <span style={{ fontWeight: 'bold', color: 'white', flex: 1, textDecoration: hiddenCategories.includes(cat.id) ? 'line-through' : 'none' }}>{cat.title}</span>
-                                       <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>{cat.itemCount} itens</span>
-                                     </div>
+                              {/* Category Level (Folders) */}
+                              {isRootExpanded && (
+                                <div style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4, marginBottom: 12 }}>
+                                  {rootCategories.map((cat: any, idx: number) => {
+                                    const isCatExpanded = expandedCategory === cat.id;
+                                    return (
+                                      <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                        <div
+                                          onClick={() => setExpandedCategory(isCatExpanded ? null : cat.id)}
+                                          style={{
+                                            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+                                            backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 8, cursor: 'pointer',
+                                            opacity: hiddenCategories.includes(cat.id) ? 0.4 : 1
+                                          }}>
+                                          <div 
+                                            onClick={(e) => toggleCategoryVisibility(cat.id, e)}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}
+                                          >
+                                            <Icon>
+                                              {hiddenCategories.includes(cat.id) ? (
+                                                <Square size={20} color="rgba(255,255,255,0.3)" />
+                                              ) : (
+                                                <CheckSquare size={20} color="#3B82F6" />
+                                              )}
+                                            </Icon>
+                                          </div>
+                                          <Icon>
+                                            {isCatExpanded ? <ChevronDown size={16} color="white" /> : <ChevronRight size={16} color="white" />}
+                                          </Icon>
+                                          <Icon>
+                                            {isCatExpanded ? <FolderOpen size={18} color="#E5A00D" fill="#E5A00D" fillOpacity={0.2} /> : <Folder size={18} color="#E5A00D" fill="#E5A00D" fillOpacity={0.2} />}
+                                          </Icon>
+                                          <span style={{ fontWeight: 'bold', color: 'white', flex: 1, textDecoration: hiddenCategories.includes(cat.id) ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.title}</span>
+                                          <select
+                                            value={categoryOverrides[cat.id] || cat.type}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              setCategoryOverrides(prev => ({ ...prev, [cat.id]: e.target.value }));
+                                            }}
+                                            style={{ backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: 4, fontFamily: 'Outfit', fontSize: 12, cursor: 'pointer', outline: 'none', marginLeft: 8, marginRight: 8 }}
+                                          >
+                                            <option value="live">TV ao Vivo</option>
+                                            <option value="series">Séries</option>
+                                            <option value="movie">Filmes</option>
+                                          </select>
+                                          <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, minWidth: '60px', textAlign: 'right' }}>{cat.itemCount} itens</span>
+                                        </div>
 
                                      {/* Item Level (Files) */}
                                      {isCatExpanded && cat.items && cat.items.length > 0 && (
