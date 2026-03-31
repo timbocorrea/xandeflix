@@ -89,6 +89,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const isSearchMode = activeFilter === 'search';
   const isSearchIdle = isSearchMode && !searchQuery.trim();
   const isMobileLiveBrowser = activeFilter === 'live' && layout.isCompact;
+  const useInlineCatalogPlayback = activeFilter === 'movie' || activeFilter === 'series';
 
   // Local UI State
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -164,6 +165,27 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setIsDetailsVisible(false);
   }, [isBrowsing]);
 
+  const resolvePlayableMedia = useCallback((media: Media): Media | null => {
+    if (media.videoUrl) {
+      return media;
+    }
+
+    const firstSeason = media.seasons?.[0];
+    const firstEpisode = firstSeason?.episodes?.[0];
+
+    if (!firstSeason || !firstEpisode) {
+      return null;
+    }
+
+    return {
+      ...media,
+      videoUrl: firstEpisode.videoUrl,
+      title: `${media.title} - ${firstEpisode.title}`,
+      currentEpisode: firstEpisode,
+      currentSeasonNumber: firstSeason.seasonNumber,
+    };
+  }, []);
+
   const handleInlineLivePlay = useCallback((media: Media) => {
     try {
       if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
@@ -179,11 +201,45 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setIsDetailsVisible(false);
   }, []);
 
+  const handleInlineCatalogPlay = useCallback((media: Media) => {
+    const playableMedia = resolvePlayableMedia(media);
+
+    if (!playableMedia) {
+      setDetailsMedia(media);
+      setIsDetailsVisible(true);
+      return;
+    }
+
+    try {
+      if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    } catch (e) {}
+
+    setPlayingMedia(playableMedia);
+    setActiveVideoUrl(playableMedia.videoUrl);
+    setVideoType(playableMedia.type);
+    setIsPlayerMinimized(true);
+    setIsAutoRotating(false);
+    setIsDetailsVisible(false);
+  }, [resolvePlayableMedia]);
+
   const handleMediaPress = useCallback((media: Media) => {
     if (media.type === 'movie' || media.type === 'series') {
+      if (useInlineCatalogPlayback) {
+        handleInlineCatalogPlay(media);
+        return;
+      }
+
       if (isBrowsing) {
         // In browse mode, tap goes straight to player (no detail modal)
-        handlePlay(media);
+        const playableMedia = resolvePlayableMedia(media);
+        if (playableMedia) {
+          handlePlay(playableMedia);
+        } else {
+          setDetailsMedia(media);
+          setIsDetailsVisible(true);
+        }
       } else {
         setDetailsMedia(media);
         setIsDetailsVisible(true);
@@ -191,7 +247,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     } else {
       handlePlay(media);
     }
-  }, [handlePlay, isBrowsing]);
+  }, [handleInlineCatalogPlay, handlePlay, isBrowsing, resolvePlayableMedia, useInlineCatalogPlayback]);
 
   const handleToggleMinimize = useCallback(() => {
     const goingToMinimize = !isPlayerMinimized;
@@ -407,6 +463,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     : layout.isTablet
     ? Math.round(layout.width * 0.4 * 9 / 16)
     : Math.round(layout.width * 0.35 * 9 / 16);
+  const hideHeroSection = (activeFilter === 'live' && layout.isDesktop) || (isBrowsing && useInlineCatalogPlayback);
 
   return (
     <View style={[styles.container, (isBrowsing || isMobileLiveBrowser) && { flexDirection: 'column' }]}>
@@ -530,7 +587,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         {!isSearchMode ? (
           loading && allCategories.length === 0 ? (
             <View style={{ height: 400, backgroundColor: '#111', borderRadius: 20, marginBottom: 40, opacity: 0.3 }} />
-          ) : activeFilter === 'live' && layout.isDesktop ? (
+          ) : hideHeroSection ? (
             null // Hide hero on live desktop view as we have the split column layout
           ) : (
             <HeroSection 
