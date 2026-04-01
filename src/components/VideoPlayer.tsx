@@ -268,11 +268,13 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     activeVideoElement.addEventListener('enterpictureinpicture', handlePiPStateChange as EventListener);
     activeVideoElement.addEventListener('leavepictureinpicture', handlePiPStateChange as EventListener);
     activeVideoElement.addEventListener('webkitpresentationmodechanged', handlePiPStateChange as EventListener);
+    activeVideoElement.addEventListener('loadedmetadata', handlePiPStateChange as EventListener);
 
     return () => {
       activeVideoElement.removeEventListener('enterpictureinpicture', handlePiPStateChange as EventListener);
       activeVideoElement.removeEventListener('leavepictureinpicture', handlePiPStateChange as EventListener);
       activeVideoElement.removeEventListener('webkitpresentationmodechanged', handlePiPStateChange as EventListener);
+      activeVideoElement.removeEventListener('loadedmetadata', handlePiPStateChange as EventListener);
     };
   }, [activeVideoElement, syncPictureInPictureState]);
 

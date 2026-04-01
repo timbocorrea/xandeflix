@@ -185,9 +185,10 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   const handlePictureInPictureChange = useCallback((isActive: boolean) => {
     setIsPictureInPictureActive(isActive);
+    setIsDetachedToPiP(isActive);
 
-    if (!isActive) {
-      setIsDetachedToPiP(false);
+    if (isActive) {
+      setIsPlayerMinimized(true);
     }
   }, []);
 
