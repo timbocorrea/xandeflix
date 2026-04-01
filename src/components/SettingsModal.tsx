@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableHighlight, View } from 'react-native';
-import { Check, KeyRound, Link, List, RotateCcw, Save, Shield, Smartphone, X } from 'lucide-react';
+import { Check, KeyRound, Link, List, RefreshCw, RotateCcw, Save, Shield, Smartphone, X } from 'lucide-react';
 import { Category } from '../types';
 import { useStore } from '../store/useStore';
 import { isAdultCategory } from '../lib/adultContent';
+import { clearPlaylistCache } from '../lib/localCache';
+import { usePlaylist } from '../hooks/usePlaylist';
 
 interface SettingsModalProps {
   isVisible: boolean;
@@ -47,6 +49,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const setAdultAccessSettings = useStore((state) => state.setAdultAccessSettings);
   const unlockAdultContent = useStore((state) => state.unlockAdultContent);
   const lockAdultContent = useStore((state) => state.lockAdultContent);
+  const { fetchPlaylist } = usePlaylist();
 
   const [localHiddenIds, setLocalHiddenIds] = useState<string[]>(hiddenCategoryIds);
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
@@ -128,6 +131,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleSave = () => {
     onSave(currentUrl, localHiddenIds);
     onClose();
+  };
+
+  const handleRefreshPlaylist = async () => {
+    setLoadingAction('refresh');
+    setFeedback();
+    try {
+      await clearPlaylistCache();
+      await fetchPlaylist();
+      setFeedback('Lista sincronizada com sucesso!');
+    } catch (error: any) {
+      setFeedback(undefined, 'Falha ao sincronizar: ' + error.message);
+    } finally {
+      setLoadingAction(null);
+    }
   };
 
   const toggleLocalCategory = (id: string) => {
@@ -307,7 +324,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <View style={styles.card}>
                   <Text style={styles.cardTitle}>Xandeflix Premium</Text>
                   <Text style={styles.cardText}>Sessao local, lista IPTV centralizada e bloqueio adulto por usuario.</Text>
+                  <TouchableHighlight
+                    onPress={handleRefreshPlaylist}
+                    underlayColor="rgba(255,255,255,0.08)"
+                    style={[styles.secondaryButton, { marginTop: 8, width: '100%', borderColor: 'rgba(255,255,255,0.15)' }]}
+                    disabled={loadingAction === 'refresh'}
+                  >
+                    <View style={styles.buttonInner}>
+                      <span style={{ marginRight: 10 }}>
+                        <RefreshCw size={18} color="#fff" style={loadingAction === 'refresh' ? { animation: 'spin 2s linear infinite' } : {}} />
+                      </span>
+                      <Text style={styles.buttonText}>
+                        {loadingAction === 'refresh' ? 'Sincronizando...' : 'Sincronizar Lista'}
+                      </Text>
+                    </View>
+                  </TouchableHighlight>
                 </View>
+
+                {statusMessage && activeTab === 'general' ? <View style={styles.successBox}><Text style={styles.noticeText}>{statusMessage}</Text></View> : null}
+                {errorMessage && activeTab === 'general' ? <View style={styles.errorBox}><Text style={styles.noticeText}>{errorMessage}</Text></View> : null}
+
                 <TouchableHighlight
                   onPress={() => {
                     if (onLogout) onLogout();

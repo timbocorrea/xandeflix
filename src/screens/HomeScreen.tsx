@@ -21,6 +21,7 @@ import { CategoryRow } from '../components/CategoryRow';
 import { VideoPlayer, type VideoPlayerHandle } from '../components/VideoPlayer';
 import LoadingScreen from '../components/LoadingScreen';
 import { isAdultCategory, isAdultMedia } from '../lib/adultContent';
+import { maskUrlCredentials } from '../lib/securityUtils';
 const MediaDetailsPage = lazy(() =>
   import('../components/MediaDetailsModal').then((module) => ({ default: module.MediaDetailsPage })),
 );
@@ -1089,7 +1090,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 )}
                 {playlistError.playlistUrl && (
                   <Text style={styles.errorUrl} numberOfLines={1}>
-                    URL: {playlistError.playlistUrl.substring(0, 60)}...
+                    URL: {maskUrlCredentials(playlistError.playlistUrl)}
                   </Text>
                 )}
               </View>

@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { MOCK_CATEGORIES } from '../mock/data';
+import { getPlaylistCache, savePlaylistCache } from '../lib/localCache';
 
 export type PlaylistStatus = 
   | 'idle'
@@ -43,7 +44,20 @@ export const usePlaylist = () => {
     }
 
     try {
-      // 1. Refresh user info to get the latest playlist URL
+      // 1. Initial Cache Check (Persistent Persistence Strategy)
+      const cached = await getPlaylistCache();
+      const CACHE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 horas
+      
+      if (cached && (Date.now() - cached.timestamp < CACHE_EXPIRATION_MS)) {
+        console.log(`[Playlist] Cache (IndexedDB) válido encontrado: ${cached.data.length} categorias de ${new Date(cached.timestamp).toLocaleTimeString()}.`);
+        setAllCategories(cached.data);
+        setIsUsingMock(false);
+        setPlaylistStatus('success');
+        setLoading(false);
+        return; // Early Exit: Cache is fresh!
+      }
+
+      // 2. Refresh user info to get the latest playlist URL
       if (authToken) {
         setPlaylistStatus('loading_user_info');
         const meResponse = await fetch('/api/auth/me', {
@@ -69,7 +83,7 @@ export const usePlaylist = () => {
         }
       }
 
-      // 2. Fetch the actual M3U content directly from the provider (Client-side)
+      // 3. Fetch the actual M3U content through proxy if not cached or expired
       setPlaylistStatus('loading_playlist');
       setPlaylistSource(playlistUrl || 'URL padrão');
 
@@ -97,7 +111,7 @@ export const usePlaylist = () => {
       
       const m3uRawText = await response.text();
       
-      // 3. Parse content client-side using a BACKGROUND WORKER (to keep UI thread at 60fps)
+      // 4. Parse content client-side using a BACKGROUND WORKER (to keep UI thread at 60fps)
       console.log(`[Playlist] Conteúdo baixado. Delegando processamento para o Web Worker...`);
       
       const parsedCategories = await new Promise<any[]>((resolve, reject) => {
@@ -123,10 +137,13 @@ export const usePlaylist = () => {
       });
       
       if (parsedCategories.length > 0) {
+        // Save to Persistent Cache BEFORE updating the UI State
+        await savePlaylistCache(parsedCategories);
+        
         setAllCategories(parsedCategories);
         setIsUsingMock(false);
         setPlaylistStatus('success');
-        console.log(`[Playlist] ✅ Processado em Background: ${parsedCategories.length} categorias.`);
+        console.log(`[Playlist] ✅ Processado em Background: ${parsedCategories.length} categorias (Cache atualizado).`);
       } else if (!hasData) {
         console.warn('[Playlist] Resposta vazia ou inválida. Usando dados MOCK.');
         setAllCategories(MOCK_CATEGORIES);

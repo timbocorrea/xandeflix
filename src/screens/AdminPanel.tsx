@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Trash2, X, Edit2, Save, Eye, ChevronDown, ChevronRight, Folder, FolderOpen, Tv, Film, Clapperboard, FileVideo, Square, CheckSquare, Search, Image as ImageIcon, FileText } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { M3UParser } from '../lib/m3uParser';
+import { maskUrlCredentials } from '../lib/securityUtils';
 
 // Wrapper to isolate lucide icons from react-native-web's createElement
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -550,7 +551,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                     </div>
                     <div style={{ flex: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Icon><LinkIcon size={12} color="rgba(255,255,255,0.4)" /></Icon>
-                      <span style={s.userUrl}>{user.playlistUrl || '—'}</span>
+                      <span style={s.userUrl}>{user.playlistUrl ? maskUrlCredentials(user.playlistUrl) : '—'}</span>
                     </div>
                     <div style={{ flex: 1 }}>
                       <span style={{
