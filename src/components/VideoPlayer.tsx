@@ -1125,7 +1125,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="absolute top-0 left-0 bottom-0 w-full max-w-[650px] bg-zinc-950/80 backdrop-blur-3xl border-r border-white/5 z-[160] flex flex-col shadow-[40px_0_100px_rgba(0,0,0,0.9)]"
+              className="absolute top-0 left-0 bottom-0 w-full max-w-[650px] bg-black/40 backdrop-blur-md border-r border-white/10 z-[160] flex flex-col shadow-[40px_0_100px_rgba(0,0,0,0.7)]"
               style={{
                 paddingTop: layout.isMobile ? 'env(safe-area-inset-top, 0px)' : 0,
                 paddingBottom: layout.isMobile ? 'env(safe-area-inset-bottom, 0px)' : 0,
