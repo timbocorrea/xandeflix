@@ -349,9 +349,12 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     if (allCategories.length === 0) return;
     
     const useLiveHeroPool = activeFilter === 'live';
-    let sourceCats = allCategories.filter((cat) =>
-      useLiveHeroPool ? cat.type === 'live' : cat.type !== 'live'
-    );
+    let sourceCats = allCategories.filter((cat) => {
+      const titleUpper = cat.title.toUpperCase();
+      const isAdult = titleUpper.includes('18+') || titleUpper.includes('+18') || titleUpper.includes('ADULT') || titleUpper.includes('XXX') || titleUpper.includes('HOT');
+      if (isAdult) return false;
+      return useLiveHeroPool ? cat.type === 'live' : cat.type !== 'live';
+    });
     
     // For specific tabs, further filter by the active type
     if (

@@ -16,6 +16,7 @@ interface MediaItemProps {
   cardGap: number;
   isCompact: boolean;
   onFocus: (media: Media, id: string) => void;
+  isAdultContent?: boolean;
   onPress: (media: Media) => void;
 }
 
@@ -28,6 +29,7 @@ const MediaItem = React.memo(({
   cardHeight,
   cardGap,
   isCompact,
+  isAdultContent = false,
   onFocus,
   onPress,
 }: MediaItemProps) => {
@@ -53,10 +55,12 @@ const MediaItem = React.memo(({
 
   // High-quality fallback if thumbnail domain (like xvbroker.click) is down
   const fallbackImg = `https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop`;
+  const adultPlaceholderImg = `https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=400&auto=format&fit=crop`; // Abstract dark texture
   
-  const targetImage = tmdbData?.thumbnail || item.thumbnail;
+  // Se for categoria adulta, NÃO CARREGA a imagem original no dashboard principal para não pesar (e proteger o usuário)
+  const targetImage = isAdultContent ? null : (tmdbData?.thumbnail || item.thumbnail);
   const isBroken = targetImage && brokenImageUri === targetImage;
-  const displayImage = isBroken ? fallbackImg : targetImage;
+  const displayImage = isAdultContent ? adultPlaceholderImg : (isBroken ? fallbackImg : targetImage);
   
   // Use cover for beautiful 2:3 tmdb posters, but contain for random 16:9 IPTV logos to avoid heavy cropping 
   const displayMode = (tmdbData?.thumbnail || isBroken) ? 'cover' : 'contain';
@@ -165,6 +169,15 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
   const scrollAmount = layout.isMobile ? cardWidth * 2.35 : layout.isTablet ? cardWidth * 2.8 : 800;
   const showNavButtons = layout.isDesktop && isHovered;
 
+  const isAdultCategory = React.useMemo(() => {
+    const titleUpper = category.title.toUpperCase();
+    return titleUpper.includes('18+') || 
+           titleUpper.includes('+18') || 
+           titleUpper.includes('ADULT') || 
+           titleUpper.includes('XXX') || 
+           titleUpper.includes('HOT');
+  }, [category.title]);
+
   const handleScroll = (direction: 'left' | 'right') => {
     if (!flatListRef.current) return;
     const newScrollX = direction === 'left' ? Math.max(0, scrollX - scrollAmount) : scrollX + scrollAmount;
@@ -238,6 +251,7 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
               cardHeight={cardHeight}
               cardGap={cardGap}
               isCompact={layout.isCompact}
+              isAdultContent={isAdultCategory}
               onFocus={onMediaFocus}
               onPress={onMediaPress}
             />
