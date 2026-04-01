@@ -9,8 +9,7 @@ import { rateLimit } from 'express-rate-limit';
 import { fileURLToPath } from 'url';
 
 // Import Services
-import { M3UParserService } from './server/services/M3UParserService.js';
-import { StreamProxyService } from './server/services/StreamProxyService.js';
+
 import { CacheManager } from './server/services/CacheManager.js';
 import { AdminService } from './server/services/AdminService.js';
 import { AuthSessionService } from './server/services/AuthSessionService.js';
@@ -42,36 +41,6 @@ if (!isProductionRuntime || process.env.ALLOW_ALL_DOMAINS === 'true') {
   authorizedDomains.add('127.0.0.1');
 }
 
-const PLAYLIST_RETRY_ATTEMPTS = 3;
-const PLAYLIST_RETRY_BACKOFF_MS = 2000;
-const playlistHttpClient = axios.create({
-  timeout: 45000,
-  responseType: 'text',
-  headers: {
-    'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
-    'Accept': '*/*',
-    'Accept-Encoding': 'gzip, deflate, br',
-  },
-  maxRedirects: 5,
-});
-
-axiosRetry(playlistHttpClient, {
-  retries: PLAYLIST_RETRY_ATTEMPTS,
-  shouldResetTimeout: true,
-  retryCondition: (error) => {
-    const status = error.response?.status;
-    return error.code === 'ECONNABORTED' || !status || status >= 500;
-  },
-  retryDelay: (retryCount, error) => {
-    const delay = PLAYLIST_RETRY_BACKOFF_MS * 2 ** (retryCount - 1);
-    const targetUrl = error.config?.url || 'unknown-url';
-    console.log(
-      `[RETRY] Playlist fetch failed for ${targetUrl.substring(0, 40)}... Retrying in ${delay}ms. (${PLAYLIST_RETRY_ATTEMPTS - retryCount} left)`,
-    );
-    return delay;
-  },
-});
-
 // Seed whitelist from environment (additional domains)
 if (process.env.AUTHORIZED_DOMAINS) {
   process.env.AUTHORIZED_DOMAINS.split(',').forEach(dom => {
@@ -82,9 +51,6 @@ if (process.env.AUTHORIZED_DOMAINS) {
     }
   });
 }
-const playlistCache = new CacheManager<any>(30); // 30 minutes cache
-const pendingRequests = new Map<string, Promise<any>>();
-
 function getRequestAuthToken(req: express.Request): string | undefined {
   const token = req.headers['x-auth-token'] || req.headers.authorization?.replace(/^Bearer\s+/i, '');
   return Array.isArray(token) ? token[0] : token;
@@ -190,201 +156,10 @@ app.use('/api', apiLimiter);
 // Rota de Teste (Ping)
 app.get('/api/ping', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
-// API Route: Streaming Proxy - MUST BE ABOVE COMPRESSION
-// We don't want to compress media streams as it adds overhead and breaks chunked encoding playback
-app.all('/api/stream', (req, res) => {
-  req.setTimeout(0);
-  res.setTimeout(0);
-  const streamUrl = req.query.url as string;
-  if (!streamUrl) return res.status(400).send('URL is required');
 
-  // Use StreamProxyService
-  StreamProxyService.proxy(streamUrl, req, res, authorizedDomains);
-});
 
 app.use(compression());
 app.use(securityHeadersMiddleware);
-
-/**
- * API Route: Fetch and parse M3U playlist
- */
-app.get('/api/playlist', async (req, res) => {
-  const session = AuthSessionService.getSession(getRequestAuthToken(req));
-  let playlistUrl = '';
-  let hiddenCategories: string[] = [];
-  let categoryOverrides: Record<string, string> = {};
-  let mediaOverrides: Record<string, any> = {};
-  console.log(`[API] Playlist request. Session: ${JSON.stringify(session)}`);
-  
-  if (session?.role === 'user' && session.userId) {
-    const user = await AdminService.getUserById(session.userId);
-    console.log(`[API] Found user in session: ${user?.username} (ID: ${session.userId}). Playlist in DB: ${user?.playlistUrl}`);
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    if (user.isBlocked) {
-      return res.status(401).json({ error: 'User blocked' });
-    }
-
-    playlistUrl = user.playlistUrl || '';
-    hiddenCategories = user.hiddenCategories || [];
-    categoryOverrides = user.categoryOverrides || {};
-    mediaOverrides = user.mediaOverrides || {};
-    if (playlistUrl) {
-      registerAuthorizedDomainFromUrl(playlistUrl);
-    }
-  } else {
-    playlistUrl = (req.query.url as string) || process.env.PLAYLIST_URL || '';
-    console.log(`[API] No user session found or user is admin. Fallback URL: ${playlistUrl}`);
-  }
-
-  if (!playlistUrl) {
-    return res.status(400).json({ error: 'Playlist URL not provided.' });
-  }
-
-  const sendFilteredCategories = async (categories: any[]) => {
-    let result = categories;
-    
-    if (hiddenCategories.length > 0) {
-      result = result.filter(c => !hiddenCategories.includes(c.id));
-    }
-    
-    if (Object.keys(categoryOverrides).length > 0) {
-      result = result.map(c => 
-        categoryOverrides[c.id] ? { ...c, type: categoryOverrides[c.id] } : c
-      );
-    }
-    
-    // Apply User-Specific Media Overrides (High Priority)
-    if (Object.keys(mediaOverrides).length > 0) {
-      result = result.map(c => ({
-        ...c,
-        items: c.items?.map((i: any) => 
-          mediaOverrides[i.url] ? { ...i, ...mediaOverrides[i.url] } : i
-        )
-      }));
-    }
-
-    // Apply Global Media Overrides (Low Priority - only if no user override exists)
-    const globals = await AdminService.getGlobalMediaOverrides();
-    if (Object.keys(globals).length > 0) {
-      result = result.map(c => ({
-        ...c,
-        items: c.items?.map((i: any) => {
-          const normalizedTitle = AdminService.normalizeTitleForMatching(i.title || '');
-          const globalMatch = globals[normalizedTitle];
-          // Only apply global if item was NOT already overridden by this user
-          if (globalMatch && !mediaOverrides[i.url]) {
-            return { ...i, ...globalMatch };
-          }
-          return i;
-        })
-      }));
-    }
-    
-    return res.json(result);
-  };
-
-  // Auto-register playlist domain (URLs come from DB or env, so they are trusted)
-  registerAuthorizedDomainFromUrl(playlistUrl);
-
-  // Attempt to serve from cache or pending request queue
-  const cachedData = playlistCache.get(playlistUrl);
-  if (cachedData) {
-    // BUG FIX: When serving from cache, we must re-register the domains in authorizedDomains
-    // since the Set is in-memory and might have been reset on server restart
-    console.log('[API] Serving playlist from cache. Re-registering domains...');
-    cachedData.forEach((cat: any) => {
-      cat.items.forEach((item: any) => {
-        if (item.videoUrl && item.videoUrl.includes('url=')) {
-          try {
-            const urlMatch = item.videoUrl.match(/url=([^&]+)/);
-            if (urlMatch) {
-              const original = decodeURIComponent(urlMatch[1]);
-              registerAuthorizedDomainFromUrl(original);
-            }
-          } catch (e) {}
-        }
-        
-        if (item.qualities) {
-          item.qualities.forEach((q: any) => {
-             if (q.url && q.url.includes('url=')) {
-                try {
-                  const urlMatch = q.url.match(/url=([^&]+)/);
-                  if (urlMatch) registerAuthorizedDomainFromUrl(decodeURIComponent(urlMatch[1]));
-                } catch (e) {}
-             } else if (q.url && q.url.startsWith('http')) {
-                registerAuthorizedDomainFromUrl(q.url);
-             }
-          });
-        }
-      });
-    });
-    return await sendFilteredCategories(cachedData);
-  }
-
-  if (pendingRequests.has(playlistUrl)) {
-    console.log('[API] Coalescing request for URL:', playlistUrl.substring(0, 50) + '...');
-    try {
-      const data = await pendingRequests.get(playlistUrl);
-      return await sendFilteredCategories(data);
-    } catch (error: any) {
-      return res.status(500).json({ error: 'Failed in previous attempt', details: error.message });
-    }
-  }
-
-  // Create new fetch promise
-  const fetchPromise = (async () => {
-    console.log(`[API] Fetching playlist for user: ${playlistUrl.substring(0, 50)}...`);
-
-    let response;
-    try {
-      response = await playlistHttpClient.get<string>(playlistUrl);
-    } catch (error: any) {
-      if (axios.isAxiosError(error) && error.response) {
-        throw new Error(`Upstream server error: ${error.response.status} ${error.response.statusText || ''}`);
-      }
-
-      throw new Error(error.message || 'Playlist request failed');
-    }
-
-    console.log(`[API] Playlist server responded with status: ${response.status}`);
-
-    if (!response.data || typeof response.data !== 'string') {
-      throw new Error('Invalid or empty playlist content');
-    }
-
-    // Check for common M3U header to verify content
-    if (!response.data.includes('#EXTM3U')) {
-      console.warn('[API] Warning: Playlist content does not start with #EXTM3U');
-    }
-
-    // Delegate parsing to parser service
-    const categories = M3UParserService.parse(response.data, (url) => {
-      registerAuthorizedDomainFromUrl(url);
-    });
-
-    console.log(`[API] Successfully parsed ${categories.length} categories.`);
-
-    // Update cache
-    playlistCache.set(playlistUrl, categories);
-    return categories;
-  })();
-
-  // Store the promise in the pending queue
-  pendingRequests.set(playlistUrl, fetchPromise);
-
-  try {
-    const categories = await fetchPromise;
-    pendingRequests.delete(playlistUrl);
-    return await sendFilteredCategories(categories);
-  } catch (error: any) {
-    pendingRequests.delete(playlistUrl);
-    console.error('[API] Playlist error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch playlist', details: error.message });
-  }
-});
 
 /**
  * API Route: Get metadata for a specific media from TMDB
@@ -419,24 +194,15 @@ app.get('/api/diagnostic', whitelistMiddleware(authorizedDomains), async (req, r
 
   let testUrl = req.query.url as string || process.env.PLAYLIST_URL || '';
 
-  // Extract real URL if proxy was passed
-  if (testUrl.startsWith('/api/stream')) {
-    const urlParams = new URL(testUrl, 'http://localhost:3000').searchParams;
-    testUrl = urlParams.get('url') || testUrl;
-  }
 
   try {
     console.log('[DIAGNOSTIC] Probing:', testUrl.substring(0, 50) + '...');
     const startTime = Date.now();
 
     const response = await axios.get(testUrl, {
-      timeout: 15000,
-      headers: {
-        'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
-        'Range': 'bytes=0-1024'
-      },
+      timeout: 10000,
       validateStatus: () => true,
-      maxRedirects: 5
+      maxRedirects: 3
     });
 
     res.json({
@@ -464,11 +230,6 @@ app.post('/api/auth/login', async (req, res) => {
       const sessionToken = AuthSessionService.issueSession(result.type, result.data?.id);
       if (result.type === 'user' && result.data?.playlistUrl) {
         registerAuthorizedDomainFromUrl(result.data.playlistUrl);
-        
-        // Limpa cache no backend ao logar para garantir dados 100% atualizados ("limpar vestigios")
-        const pUrl = result.data.playlistUrl;
-        if (playlistCache.has(pUrl)) playlistCache.delete(pUrl);
-        if (pendingRequests.has(pUrl)) pendingRequests.delete(pUrl);
       }
 
       const responseBody = {
@@ -700,54 +461,11 @@ app.delete('/api/admin/user/:id', adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/admin/user/:id/categories', adminAuthMiddleware, async (req, res) => {
-  try {
-    const user = await AdminService.getUserById(req.params.id);
-    if (!user) return res.status(404).send('Usuário não encontrado');
-    if (!user.playlistUrl) return res.json([]);
-
-    let categories = playlistCache.get(user.playlistUrl);
-    
-    // Fallback: If not cached, fetch and parse (lightweight version without keeping items in memory)
-    if (!categories) {
-      console.log(`[ADMIN-API] Fetching playlist to preview categories for user ${user.username}`);
-      let m3uContent = '';
-      
-      const isTestEnv = !!process.env.TEST_M3U_PATH;
-      if (isTestEnv && user.playlistUrl === process.env.PLAYLIST_URL) {
-        const fs = await import('fs');
-        const path = await import('path');
-        m3uContent = fs.readFileSync(path.resolve(process.cwd(), process.env.TEST_M3U_PATH as string), 'utf-8');
-      } else {
-        const response = await playlistHttpClient.get(user.playlistUrl);
-        m3uContent = response.data;
-      }
-      categories = M3UParserService.parse(m3uContent, () => {});
-    }
-
-    // Map to a lightweight summary format so we don't send 50MB of JSON to the admin panel
-    const summary = categories.map((cat: any) => ({
-      id: cat.id,
-      title: cat.title,
-      type: cat.type,
-      itemCount: cat.items ? cat.items.length : 0,
-      // Send more details but limit count to avoid crashing the browser with huge playlists
-      items: cat.items ? cat.items.slice(0, 1000).map((i: any) => ({
-        title: i.title,
-        url: i.url,
-        thumbnail: i.thumbnail,
-        description: i.description,
-        type: i.type
-      })) : []
-    }));
-
-    res.json(summary);
-  } catch (e: any) {
-    console.error(`[ADMIN-API] Error fetching categories for user ${req.params.id}:`, e.message);
-    res.status(500).json({ error: 'Erro ao carregar lista de categorias' });
-  }
-});
-
+/**
+ * API Route: Save hidden categories for a user.
+ * Note: Client-side decentralization means the Admin Panel now fetches
+ * and parses the .m3u itself to show the category list.
+ */
 app.post('/api/admin/user/:id/hiddenCategories', adminAuthMiddleware, async (req, res) => {
   try {
     const { categories } = req.body;

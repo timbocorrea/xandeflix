@@ -1,6 +1,6 @@
-import { Category, Media, MediaType } from "../../src/types/index.js";
+import { Category, Media, MediaType } from "../types";
 
-export class M3UParserService {
+export class M3UParser {
   private static extractAttributeValue(attributes: string, attributeName: string): string | undefined {
     const pattern = new RegExp(`${attributeName}=(?:"([^"]*)"|'([^']*)'|([^\\s]+))`, 'i');
     const match = attributes.match(pattern);
@@ -133,7 +133,7 @@ export class M3UParserService {
   /**
    * Parses the full M3U content into organized categories
    */
-  public static parse(m3uContent: string, onParsedUrl: (url: string) => void): Category[] {
+  public static parse(m3uContent: string, onParsedUrl?: (url: string) => void): Category[] {
     const lines = m3uContent.split(/\r?\n/);
     const items: Media[] = [];
     let currentItem: Partial<Media> | null = null;
@@ -183,7 +183,7 @@ export class M3UParserService {
         if (!currentItem) continue; // Skip orphan links
 
         const streamUrl = line;
-        onParsedUrl(streamUrl);
+        if (onParsedUrl) onParsedUrl(streamUrl);
 
         // --- Refine media type based on URL (Highest Confidence) ---
         if (currentItem) {
@@ -208,7 +208,7 @@ export class M3UParserService {
           }
         }
 
-        (currentItem as Media).videoUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}`;
+        (currentItem as Media).videoUrl = streamUrl;
         items.push(currentItem as Media);
         currentItem = null;
       }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Trash2, X, Edit2, Save, Eye, ChevronDown, ChevronRight, Folder, FolderOpen, Tv, Film, Clapperboard, FileVideo, Square, CheckSquare, Search, Image as ImageIcon, FileText } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import { M3UParser } from '../lib/m3uParser';
 
 // Wrapper to isolate lucide icons from react-native-web's createElement
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -104,14 +105,13 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setMediaOverrides(user.mediaOverrides || {});
     setPreviewLoading(true);
     try {
-      const response = await fetch(`/api/admin/user/${user.id}/categories`, {
-        headers: { 'x-admin-token': authToken }
-      });
+      const response = await fetch(user.playlistUrl);
       if (!response.ok) {
-        throw new Error('Não foi possível carregar as categorias da lista.');
+        throw new Error('Não foi possível carregar o arquivo da lista diretamente do provedor.');
       }
-      const data = await response.json();
-      setPreviewCategories(data);
+      const m3uText = await response.text();
+      const parsedCategories = M3UParser.parse(m3uText);
+      setPreviewCategories(parsedCategories);
     } catch (err: any) {
       alert(err.message);
       setPreviewingUser(null);

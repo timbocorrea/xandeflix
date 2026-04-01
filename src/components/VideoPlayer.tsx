@@ -63,28 +63,18 @@ const LIVE_TELEMETRY_SAMPLE_RATE = 0.05;
 
 function extractOriginalStreamUrl(playerUrl: string): string {
   if (!playerUrl) return '';
-  if (!playerUrl.includes('/api/stream')) return playerUrl.toLowerCase();
-
-  try {
-    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
-    const parsed = new URL(playerUrl, base);
-    return (parsed.searchParams.get('url') || '').toLowerCase();
-  } catch {
-    return decodeURIComponent(playerUrl.split('url=')[1] || '').toLowerCase();
-  }
+  return playerUrl.toLowerCase();
 }
 
 function buildPlayerSourceUrl(playerUrl: string, reloadToken: number): string {
-  if (!playerUrl || !playerUrl.includes('/api/stream')) return playerUrl;
+  if (!playerUrl) return '';
+  if (reloadToken <= 0) return playerUrl;
 
   try {
-    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
-    const parsed = new URL(playerUrl, base);
-    if (reloadToken > 0) parsed.searchParams.set('_xr', String(reloadToken));
-    else parsed.searchParams.delete('_xr');
-    return `${parsed.pathname}${parsed.search}`;
+    const url = new URL(playerUrl);
+    url.searchParams.set('_xr', String(reloadToken));
+    return url.toString();
   } catch {
-    if (reloadToken <= 0) return playerUrl;
     return `${playerUrl}${playerUrl.includes('?') ? '&' : '?'}_xr=${reloadToken}`;
   }
 }
@@ -915,7 +905,12 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       return;
     }
 
-    const player = mpegts.createPlayer({ type: 'mpegts', isLive: isLiveStream, url: sourceUrl });
+    const player = mpegts.createPlayer({ 
+      type: 'mpegts', 
+      isLive: isLiveStream, 
+      url: sourceUrl,
+      withCredentials: false 
+    });
     player.attachMediaElement(video);
     player.load();
     video.controls = false;
@@ -942,6 +937,14 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       autoplay: true,
       controls: false,
       sources: [{ src: sourceUrl, type: 'application/x-mpegURL' }],
+      html5: {
+        vhs: {
+          withCredentials: false
+        },
+        hls: {
+          withCredentials: false
+        }
+      }
     });
 
     playerRef.current = player;

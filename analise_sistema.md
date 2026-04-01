@@ -16,13 +16,12 @@ O projeto utiliza uma abordagem de monólito moderno com separação clara de re
 
 ### 2. Camada de Backend (Express.js)
 O servidor atua em três frentes principais:
-*   **Proxy de Streaming**: Contornando limitações de CORS e adicionando headers necessários (User-Agent de VLC) para compatibilidade com painéis de IPTV tradicionais.
-*   **Parsing de M3U**: Processamento inteligente de listas de reprodução remotas.
+*   **Gerenciador de Playlist**: Processamento inteligente de listas de reprodução remotas e normalização de metadados.
 *   **Autenticação e Administração**: Controle de usuários e acesso à plataforma.
 
 ### 3. Serviços de Backend (`/server/services`)
 *   **M3UParserService**: Transforma arquivos M3U brutos em categorias e itens estruturados.
-*   **StreamProxyService**: Gerencia o tráfego de vídeo em tempo real entre o provedor e o cliente.
+*   **TMDBService**: Integração com a API do TMDB para enriquecimento automático de metadados de VOD.
 *   **CacheManager**: Sistema de cache de 30 minutos para evitar requisições redundantes a provedores externos.
 *   **AdminService**: Gerencia a persistência de usuários no arquivo `users.json`.
 
@@ -30,11 +29,11 @@ O servidor atua em três frentes principais:
 
 ## 🔒 Segurança e Performance
 
-*   **Whitelist de Domínios**: Apenas domínios autorizados podem ser acessados via proxy.
+*   **Whitelist de Domínios**: Apenas domínios de playlists autorizados podem ser acessados via API de diagnóstico.
 *   **Segurança de Headers**: Implementação de CSP e outros headers de segurança via middleware.
 *   **Otimização de Carregamento**:
-    *   Uso de compressão Gzip/Brotli para dados de texto.
-    *   Exclusão estratégica de compressão para streams de vídeo (evitando latência/buffering).
+    *   Uso de compressão Gzip/Brotli para dados de texto (JSON/M3U).
+    *   Arquitetura **Fast Origin Transfer**: O vídeo é servido diretamente da origem, eliminando custos de transferência e latência no servidor.
     *   "Request Coalescing" no parser de playlist (múltiplas requisições simultâneas para a mesma URL são unificadas em uma única busca).
 
 ---

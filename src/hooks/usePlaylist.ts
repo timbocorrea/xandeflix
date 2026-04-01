@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { MOCK_CATEGORIES } from '../mock/data';
+import { M3UParser } from '../lib/m3uParser';
 
 export type PlaylistStatus = 
   | 'idle'
@@ -69,41 +70,38 @@ export const usePlaylist = () => {
         }
       }
 
-      // 2. Fetch the actual M3U content
+      // 2. Fetch the actual M3U content directly from the provider (Client-side)
       setPlaylistStatus('loading_playlist');
-      setPlaylistSource(playlistUrl || 'URL padrão do sistema');
+      setPlaylistSource(playlistUrl || 'URL padrão');
 
-      const fetchUrl = authToken
-        ? '/api/playlist'
-        : (playlistUrl ? `/api/playlist?url=${encodeURIComponent(playlistUrl)}` : '/api/playlist');
+      if (!playlistUrl) {
+         throw new Error('Nenhuma URL de playlist configurada.');
+      }
 
-      console.log(`[Playlist] Buscando playlist em: ${fetchUrl}`);
+      console.log(`[Playlist] Buscando conteúdo bruto em: ${playlistUrl}`);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-      const response = await fetch(fetchUrl, {
+      const response = await fetch(playlistUrl, {
         signal: controller.signal,
-        headers: authToken ? { 'x-auth-token': authToken } : undefined,
       });
       clearTimeout(timeoutId);
       
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => ({}));
-        const errorMsg = errorBody.error || errorBody.message || `HTTP ${response.status}`;
-        console.error(`[Playlist] Erro ao carregar playlist: ${errorMsg}`, errorBody);
-        
-        throw new Error(errorMsg);
+        throw new Error(`Erro ao baixar lista: HTTP ${response.status}`);
       }
       
-      const data = await response.json();
+      const m3uRawText = await response.text();
       
-      if (Array.isArray(data) && data.length > 0) {
-        setAllCategories(data);
+      // 3. Parse content client-side
+      const parsedCategories = M3UParser.parse(m3uRawText);
+      
+      if (parsedCategories.length > 0) {
+        setAllCategories(parsedCategories);
         setIsUsingMock(false);
         setPlaylistStatus('success');
-        setPlaylistSource(playlistUrl || 'URL do servidor');
-        console.log(`[Playlist] ✅ Carregado com sucesso: ${data.length} categorias de "${playlistUrl || 'URL padrão'}"`);
+        console.log(`[Playlist] ✅ Processado no cliente: ${parsedCategories.length} categorias.`);
       } else if (!hasData) {
         console.warn('[Playlist] Resposta vazia ou inválida. Usando dados MOCK.');
         setAllCategories(MOCK_CATEGORIES);
