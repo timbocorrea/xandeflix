@@ -9,11 +9,13 @@ interface LiveTVGridProps {
   categories: Category[];
   onPlayFull: (media: Media) => void;
   layout: any;
+  externalMedia?: Media | null;
+  isGlobalPlayerActive?: boolean;
 }
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, layout }) => {
+export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, layout, externalMedia, isGlobalPlayerActive }) => {
   const liveCategories = useMemo(() => 
     categories.filter(c => c.type === 'live' && c.items.length > 0), 
     [categories]
@@ -26,6 +28,18 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
   const [previewMedia, setPreviewMedia] = useState<Media | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Sincronizar com media externa (vindo de "minimizar" o player global)
+  useEffect(() => {
+    if (externalMedia) {
+      setPreviewMedia(externalMedia);
+      setSelectedMediaId(externalMedia.id);
+      
+      // Auto selecionar a categoria
+      const catId = liveCategories.find(c => c.items.some(i => i.id === externalMedia.id))?.id;
+      if (catId) setSelectedCatId(catId);
+    }
+  }, [externalMedia, liveCategories]);
 
   const currentCategory = useMemo(() => 
     liveCategories.find(c => c.id === selectedCatId),
@@ -41,8 +55,6 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
   }, [currentCategory, searchQuery]);
 
   const openFullScreen = (media: Media) => {
-    setSelectedMediaId(null);
-    setPreviewMedia(null);
     onPlayFull(media);
   };
 
@@ -163,7 +175,7 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
       {/* Preview Player Section */}
       <View style={styles.playerSection}>
         <AnimatePresence mode="wait">
-          {previewMedia ? (
+          {previewMedia && !isGlobalPlayerActive ? (
             <motion.div
               key={previewMedia.id}
               initial={{ opacity: 0, y: 20 }}

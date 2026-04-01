@@ -321,8 +321,14 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, [handleInlineCatalogPlay, handlePlay, isBrowsing, resolvePlayableMedia, useInlineCatalogPlayback]);
 
   const handleToggleMinimize = useCallback(() => {
+    // Para Live TV no Desktop, o modo "navegação" é internamente controlado pelo LiveTVGrid.
+    // Minimizar o player global deve apenas fechá-lo e as colunas originais voltam.
+    if (activeFilter === 'live' && layout.isDesktop) {
+      closeActivePlayer();
+      return;
+    }
+
     const goingToMinimize = !isPlayerMinimized;
-    // If minimizing → exit fullscreen so the layout is visible
     if (goingToMinimize) {
       try {
         if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
@@ -330,7 +336,6 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         }
       } catch (e) {}
     } else {
-      // Restoring fullscreen
       try {
         if (typeof document !== 'undefined' && document.documentElement.requestFullscreen) {
           document.documentElement.requestFullscreen();
@@ -338,7 +343,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       } catch (e) {}
     }
     setIsPlayerMinimized(goingToMinimize);
-  }, [isPlayerMinimized]);
+  }, [activeFilter, layout.isDesktop, isPlayerMinimized, closeActivePlayer]);
 
   // Handle media selection/auto-rotation
   // Build a pool of diverse items for the hero slideshow
@@ -840,7 +845,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             media={playingMedia}
             nextEpisode={nextEpisode}
             onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
-            onClose={() => navigateBackInApp(closeActivePlayer)}
+            onClose={closeActivePlayer}
             isMinimized={false}
             onToggleMinimize={isMobileLiveBrowser ? undefined : handleToggleMinimize}
             isBrowseMode={true}
@@ -933,6 +938,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                 categories={allCategories} 
                 layout={layout}
                 onPlayFull={handleMediaPress}
+                isGlobalPlayerActive={!!activeVideoUrl}
               />
             </Suspense>
           ) : isSearchIdle ? (
@@ -1132,7 +1138,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               media={playingMedia}
               nextEpisode={nextEpisode}
               onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
-              onClose={() => navigateBackInApp(closeActivePlayer)}
+              onClose={closeActivePlayer}
               isMinimized={false}
               onToggleMinimize={handleToggleMinimize}
               channelBrowserCategories={playingMedia?.type === 'live' ? liveChannelCategories : undefined}
