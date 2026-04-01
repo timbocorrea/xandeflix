@@ -88,8 +88,8 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
         left: 0,
         right: 0,
         bottom: 0,
-        zIndex: 5000,
-        backgroundColor: '#050505',
+        zIndex: 900,
+        backgroundColor: 'rgba(5,5,5,0.98)',
         display: 'flex',
         flexDirection: 'column',
       }}
