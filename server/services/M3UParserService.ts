@@ -109,23 +109,24 @@ export class M3UParserService {
    */
   private static normalizeCategoryTitle(title: string): string {
     let normalized = title.trim();
-    
-    // 1. Remove prefixos de país comuns (ex: "BR |", "PT -", "US")
+
+    // 1. Remove prefixos de país comuns apenas no início da string (mantendo o resto intacto)
     normalized = normalized.replace(/^(?:BR|PT|US|UK|GLOBAL)[\s-]*\|?[\s-]*/i, '');
-    
-    // 2. Agrupamento de variações de 4K
-    if (/4K/i.test(normalized)) {
-      if (/FILME/i.test(normalized)) return 'Filmes 4K';
-      if (/S[EÉ]RIE/i.test(normalized)) return 'Séries 4K';
-    }
-    
-    // 3. Padronização de nomes comuns para evitar duplicatas por causa de plurais ou acentos
-    if (/^FILMES/i.test(normalized)) return 'Filmes';
-    if (/^S[EÉ]RIES/i.test(normalized)) return 'Séries';
-    if (/^ANIMES/i.test(normalized)) return 'Animes';
-    if (/^DESENHOS|KIDS|INFANTIL/i.test(normalized)) return 'Infantil';
-    if (/^DOCUMENT[AÁ]RIOS/i.test(normalized)) return 'Documentários';
-    
+
+    // 2. Padronização EXATA para evitar plurais duplicados em categorias raiz isoladas,
+    // mas sem destruir categorias compostas (ex: "Filmes | Ação" continuará sendo "Filmes | Ação")
+    const exactMatchUpper = normalized.toUpperCase();
+
+    if (exactMatchUpper === 'FILME') return 'Filmes';
+    if (exactMatchUpper === 'SÉRIE' || exactMatchUpper === 'SERIE') return 'Séries';
+    if (exactMatchUpper === 'ANIME') return 'Animes';
+    if (exactMatchUpper === 'DOCUMENTÁRIO' || exactMatchUpper === 'DOCUMENTARIO') return 'Documentários';
+    if (exactMatchUpper === 'DESENHO' || exactMatchUpper === 'KIDS') return 'Infantil';
+
+    // 3. Casos específicos de 4K apenas se for a categoria principal isolada
+    if (exactMatchUpper === 'FILMES 4K' || exactMatchUpper === '4K FILMES') return 'Filmes 4K';
+    if (exactMatchUpper === 'SÉRIES 4K' || exactMatchUpper === 'SERIES 4K' || exactMatchUpper === '4K SÉRIES') return 'Séries 4K';
+
     return normalized;
   }
 
