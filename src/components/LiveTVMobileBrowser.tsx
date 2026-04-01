@@ -1,12 +1,9 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableHighlight, Image, TextInput } from 'react-native';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Play, Radio, Search } from 'lucide-react';
 import { Category, Media } from '../types';
-
-const VideoPlayer = lazy(() =>
-  import('./VideoPlayer').then((module) => ({ default: module.VideoPlayer })),
-);
+import { VideoPlayer } from './VideoPlayer';
 
 interface LiveTVMobileBrowserProps {
   categories: Category[];
@@ -15,6 +12,7 @@ interface LiveTVMobileBrowserProps {
   layout: any;
   onSelectChannel: (media: Media) => void;
   onClosePlayer: () => void;
+  showEmbeddedPlayer?: boolean;
 }
 
 export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
@@ -24,6 +22,7 @@ export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
   layout,
   onSelectChannel,
   onClosePlayer,
+  showEmbeddedPlayer = true,
 }) => {
   const liveCategories = useMemo(
     () => categories.filter((category) => category.type === 'live' && category.items.length > 0),
@@ -79,6 +78,7 @@ export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
 
   const playerHeight = Math.round(layout.width * 9 / 16);
   const hasActivePlayer = !!activeMedia && !!activeVideoUrl;
+  const topSpacing = showEmbeddedPlayer || !hasActivePlayer ? layout.topHeaderPadding + 16 : 16;
 
   if (liveCategories.length === 0) {
     return (
@@ -93,8 +93,8 @@ export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
   }
 
   return (
-    <View style={[styles.container, { paddingTop: layout.topHeaderPadding + 16 }]}>
-      {hasActivePlayer ? (
+    <View style={[styles.container, { paddingTop: topSpacing }]}>
+      {showEmbeddedPlayer && hasActivePlayer ? (
         <View style={styles.playerBlock}>
           <View style={styles.playerHeader}>
             <View>
@@ -108,21 +108,19 @@ export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
           </View>
 
           <View style={[styles.playerFrame, { height: playerHeight }]}>
-            <Suspense fallback={<View style={styles.playerFallback} />}>
-              <VideoPlayer
-                key={`mobile-live-${activeVideoUrl}`}
-                url={activeVideoUrl}
-                mediaType="live"
-                media={activeMedia}
-                onClose={onClosePlayer}
-                isBrowseMode={true}
-                showChannelSidebar={false}
-                channelBrowserCategories={liveCategories}
-              />
-            </Suspense>
+            <VideoPlayer
+              key={`mobile-live-${activeVideoUrl}`}
+              url={activeVideoUrl}
+              mediaType="live"
+              media={activeMedia}
+              onClose={onClosePlayer}
+              isBrowseMode={true}
+              showChannelSidebar={false}
+              channelBrowserCategories={liveCategories}
+            />
           </View>
         </View>
-      ) : (
+      ) : !hasActivePlayer ? (
         <View style={styles.introCard}>
           <View style={styles.introIconWrap}>
             <Radio size={22} color="#E50914" />
@@ -134,7 +132,7 @@ export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
             </Text>
           </View>
         </View>
-      )}
+      ) : null}
 
       <View style={[styles.listBlock, { paddingBottom: layout.bottomNavigationHeight + 18 }]}>
         <View style={styles.searchShell}>

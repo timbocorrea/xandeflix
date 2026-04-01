@@ -18,11 +18,8 @@ import { MobileBottomNav } from '../components/MobileBottomNav';
 import { SettingsModal } from '../components/SettingsModal';
 import { HeroSection } from '../components/HeroSection';
 import { CategoryRow } from '../components/CategoryRow';
+import { VideoPlayer, type VideoPlayerHandle } from '../components/VideoPlayer';
 import LoadingScreen from '../components/LoadingScreen';
-
-const VideoPlayer = lazy(() =>
-  import('../components/VideoPlayer').then((module) => ({ default: module.VideoPlayer })),
-);
 const MediaDetailsPage = lazy(() =>
   import('../components/MediaDetailsModal').then((module) => ({ default: module.MediaDetailsPage })),
 );
@@ -121,12 +118,15 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [detailsMedia, setDetailsMedia] = useState<Media | null>(null);
   const [isDetailsVisible, setIsDetailsVisible] = useState(false);
   const [gridCategory, setGridCategory] = useState<Category | null>(null);
+  const [isDetachedToPiP, setIsDetachedToPiP] = useState(false);
+  const [isPictureInPictureActive, setIsPictureInPictureActive] = useState(false);
   const [isPageVisible, setIsPageVisible] = useState(
     typeof document === 'undefined' ? true : !document.hidden
   );
   
   const scrollRef = useRef<ScrollView>(null);
   const searchInputRef = useRef<any>(null);
+  const activePlayerRef = useRef<VideoPlayerHandle | null>(null);
   
   // Initial Data Fetch
   useEffect(() => {
@@ -158,9 +158,56 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     return () => clearTimeout(focusTimer);
   }, [activeFilter]);
 
+  const liveChannelCategories = useMemo(
+    () => allCategories.filter((category) => category.type === 'live' && category.items.length > 0),
+    [allCategories]
+  );
+
   // isBrowsing: player docked at top, content browser below
   const isBrowsing = !!activeVideoUrl && isPlayerMinimized;
-  const isPinnedPlayerLayout = isBrowsing || isMobileLiveBrowser;
+  const hasVisiblePinnedPlayer = !!activeVideoUrl && !isDetachedToPiP && (isBrowsing || isMobileLiveBrowser);
+  const isPinnedPlayerLayout = !isDetachedToPiP && (isBrowsing || isMobileLiveBrowser);
+  const shouldRenderPinnedPlayer = !!activeVideoUrl && (isBrowsing || isMobileLiveBrowser || isDetachedToPiP);
+
+  const closeActivePlayer = useCallback(() => {
+    setIsDetachedToPiP(false);
+    setIsPictureInPictureActive(false);
+    setActiveVideoUrl(null);
+    setPlayingMedia(null);
+    setVideoType(null);
+    setIsPlayerMinimized(false);
+
+    try {
+      if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    } catch (e) {}
+  }, []);
+
+  const handlePictureInPictureChange = useCallback((isActive: boolean) => {
+    setIsPictureInPictureActive(isActive);
+
+    if (!isActive) {
+      setIsDetachedToPiP(false);
+    }
+  }, []);
+
+  const detachPlaybackToPiP = useCallback(async () => {
+    if (!activeVideoUrl) {
+      return false;
+    }
+
+    setIsPlayerMinimized(true);
+
+    if (isPictureInPictureActive) {
+      setIsDetachedToPiP(true);
+      return true;
+    }
+
+    const enteredPiP = (await activePlayerRef.current?.enterPictureInPicture()) ?? false;
+    setIsDetachedToPiP(enteredPiP);
+    return enteredPiP;
+  }, [activeVideoUrl, isPictureInPictureActive]);
 
   // Handle play action
   const handlePlay = useCallback(async (media: Media) => {
@@ -175,6 +222,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       }
     }
     
+    setIsDetachedToPiP(false);
     setPlayingMedia(media);
     setActiveVideoUrl(media.videoUrl);
     setVideoType(media.type);
@@ -214,6 +262,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       }
     } catch (e) {}
 
+    setIsDetachedToPiP(false);
     setPlayingMedia(media);
     setActiveVideoUrl(media.videoUrl);
     setVideoType(media.type);
@@ -237,6 +286,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       }
     } catch (e) {}
 
+    setIsDetachedToPiP(false);
     setPlayingMedia(playableMedia);
     setActiveVideoUrl(playableMedia.videoUrl);
     setVideoType(playableMedia.type);
@@ -403,7 +453,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   /**
    * Action Handlers
    */
-  const handleMenuSelect = useCallback((filter: string) => {
+  const handleMenuSelect = useCallback(async (filter: string) => {
     if (filter === 'admin') {
       setIsAdminMode(true);
       return;
@@ -418,15 +468,13 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       setSearchQuery('');
     }
 
-    if (layout.isCompact && activeFilter === 'live' && filter !== 'live') {
-      setActiveVideoUrl(null);
-      setPlayingMedia(null);
-      setIsPlayerMinimized(false);
+    if (filter !== activeFilter && activeVideoUrl) {
+      await detachPlaybackToPiP();
     }
 
     setActiveFilter(filter);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
-  }, [activeFilter, layout.isCompact, setActiveFilter, setIsAdminMode, setIsSettingsVisible, setSearchQuery]);
+  }, [activeFilter, activeVideoUrl, detachPlaybackToPiP, setActiveFilter, setIsAdminMode, setIsSettingsVisible, setSearchQuery]);
 
   const handleSaveSettings = useCallback((url: string, newHiddenIds: string[]) => {
     setHiddenCategoryIds(newHiddenIds);
@@ -484,7 +532,12 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     : layout.isTablet
     ? Math.round(layout.width * 0.4 * 9 / 16)
     : Math.round(layout.width * 0.35 * 9 / 16);
-  const hideHeroSection = (activeFilter === 'live' && layout.isDesktop) || (isBrowsing && useInlineCatalogPlayback);
+  const pinnedPlayerHeight = isMobileLiveBrowser
+    ? Math.round(layout.width * 9 / 16)
+    : browsePlayerHeight;
+  const hideHeroSection =
+    (activeFilter === 'live' && layout.isDesktop) ||
+    (!isDetachedToPiP && isBrowsing && useInlineCatalogPlayback);
   const mediaLookup = useMemo(() => {
     const map = new Map<string, Media>();
 
@@ -592,6 +645,8 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setActiveVideoUrl(snapshot.player?.videoUrl ?? null);
     setVideoType(snapshot.player?.type ?? null);
     setIsPlayerMinimized(snapshot.player?.isMinimized ?? false);
+    setIsDetachedToPiP(false);
+    setIsPictureInPictureActive(false);
 
     if (!snapshot.player || snapshot.player.displayMode === 'inline') {
       try {
@@ -745,44 +800,50 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       )}
       
       {/* ── Browse-while-playing: docked player at top ── */}
-      {isBrowsing && activeVideoUrl && !isMobileLiveBrowser && (
+      {shouldRenderPinnedPlayer && activeVideoUrl && (
         <View
-          style={{
-            width: '100%',
-            height: browsePlayerHeight,
-            backgroundColor: '#000',
-            borderBottom: '1px solid rgba(255,255,255,0.08)' as any,
-            flexShrink: 0,
-            position: 'relative',
-            zIndex: 50,
-            marginTop: layout.isMobile ? 'env(safe-area-inset-top, 0px)' : 0,
-            marginLeft: layout.isCompact ? 0 : layout.sideRailWidth,
-          }}
+          style={
+            isDetachedToPiP
+              ? {
+                  position: 'fixed',
+                  top: -200,
+                  left: -200,
+                  width: 1,
+                  height: 1,
+                  opacity: 0,
+                  overflow: 'hidden',
+                  pointerEvents: 'none' as any,
+                }
+              : {
+                  width: '100%',
+                  height: pinnedPlayerHeight,
+                  backgroundColor: '#000',
+                  borderBottom: '1px solid rgba(255,255,255,0.08)' as any,
+                  flexShrink: 0,
+                  position: 'relative',
+                  zIndex: 50,
+                  marginTop: layout.isMobile ? 'env(safe-area-inset-top, 0px)' : 0,
+                  marginLeft: layout.isCompact ? 0 : layout.sideRailWidth,
+                }
+          }
         >
           {/* Inline player — no fullscreen controls */}
-          <Suspense fallback={<View style={{ height: browsePlayerHeight, backgroundColor: '#000' }} />}>
-            <VideoPlayer
-              key={`browse-${activeVideoUrl}`}
-              url={activeVideoUrl}
-              mediaType={videoType || 'live'}
-              media={playingMedia}
-              nextEpisode={nextEpisode}
-              onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
-              onClose={() => navigateBackInApp(() => {
-                setActiveVideoUrl(null);
-                setPlayingMedia(null);
-                setIsPlayerMinimized(false);
-                try {
-                  if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
-                    document.exitFullscreen().catch(() => {});
-                  }
-                } catch (e) {}
-              })}
-              isMinimized={false}
-              onToggleMinimize={handleToggleMinimize}
-              isBrowseMode={true}
-            />
-          </Suspense>
+          <VideoPlayer
+            ref={activePlayerRef}
+            key={`pinned-${activeVideoUrl}`}
+            url={activeVideoUrl}
+            mediaType={videoType || 'live'}
+            media={playingMedia}
+            nextEpisode={nextEpisode}
+            onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
+            onClose={() => navigateBackInApp(closeActivePlayer)}
+            isMinimized={false}
+            onToggleMinimize={isMobileLiveBrowser ? undefined : handleToggleMinimize}
+            isBrowseMode={true}
+            showChannelSidebar={!isMobileLiveBrowser}
+            channelBrowserCategories={playingMedia?.type === 'live' ? liveChannelCategories : undefined}
+            onPictureInPictureChange={handlePictureInPictureChange}
+          />
         </View>
       )}
 
@@ -794,11 +855,8 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             activeVideoUrl={playingMedia?.type === 'live' ? activeVideoUrl : null}
             layout={layout}
             onSelectChannel={handleInlineLivePlay}
-            onClosePlayer={() => navigateBackInApp(() => {
-              setActiveVideoUrl(null);
-              setPlayingMedia(null);
-              setIsPlayerMinimized(false);
-            })}
+            onClosePlayer={() => navigateBackInApp(closeActivePlayer)}
+            showEmbeddedPlayer={false}
           />
         </Suspense>
       ) : (
@@ -907,7 +965,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       )}
 
       {/* Header Branding - Overlays the ScrollView */}
-      {!isBrowsing && !isMobileLiveBrowser && (
+      {!hasVisiblePinnedPlayer && !isMobileLiveBrowser && (
         <View
           style={[
             styles.header,
@@ -1063,24 +1121,18 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         {activeVideoUrl && !isBrowsing && !isMobileLiveBrowser && (
           <Suspense fallback={null}>
             <VideoPlayer 
+              ref={activePlayerRef}
               key={activeVideoUrl}
               url={activeVideoUrl} 
               mediaType={videoType || 'live'}
               media={playingMedia}
               nextEpisode={nextEpisode}
               onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
-              onClose={() => navigateBackInApp(() => {
-                setActiveVideoUrl(null);
-                setPlayingMedia(null);
-                setIsPlayerMinimized(false);
-                try {
-                  if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
-                    document.exitFullscreen().catch(() => {});
-                  }
-                } catch (e) {}
-              })}
+              onClose={() => navigateBackInApp(closeActivePlayer)}
               isMinimized={false}
               onToggleMinimize={handleToggleMinimize}
+              channelBrowserCategories={playingMedia?.type === 'live' ? liveChannelCategories : undefined}
+              onPictureInPictureChange={handlePictureInPictureChange}
             />
           </Suspense>
         )}

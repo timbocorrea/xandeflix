@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useImperativeHandle, useRef } from 'react';
 import mpegts from 'mpegts.js';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
@@ -21,6 +21,11 @@ interface VideoPlayerProps {
   isBrowseMode?: boolean;
   showChannelSidebar?: boolean;
   channelBrowserCategories?: Category[];
+  onPictureInPictureChange?: (isActive: boolean) => void;
+}
+
+export interface VideoPlayerHandle {
+  enterPictureInPicture: () => Promise<boolean>;
 }
 
 /**
@@ -37,7 +42,7 @@ function detectStrategy(proxyUrl: string): 'mpegts' | 'hls' | 'native' {
   return 'mpegts';
 }
 
-export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
+export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(({
   url, 
   mediaType, 
   media = null,
@@ -50,7 +55,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isBrowseMode = false,
   showChannelSidebar = true,
   channelBrowserCategories,
-}) => {
+  onPictureInPictureChange,
+}, ref) => {
   const layout = useResponsiveLayout();
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -135,9 +141,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     );
   }, []);
 
-  const togglePictureInPicture = React.useCallback(async () => {
+  const enterPictureInPicture = React.useCallback(async (): Promise<boolean> => {
     if (!activeVideoElement || typeof document === 'undefined') {
-      return;
+      return false;
     }
 
     const pipDocument = document as Document & {
@@ -160,13 +166,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (pipDocument.pictureInPictureElement && pipDocument.exitPictureInPicture) {
         await pipDocument.exitPictureInPicture();
         syncPictureInPictureState(activeVideoElement);
-        return;
+        return false;
       }
 
       if (pipVideo.webkitPresentationMode === 'picture-in-picture' && pipVideo.webkitSetPresentationMode) {
-        pipVideo.webkitSetPresentationMode('inline');
         syncPictureInPictureState(activeVideoElement);
-        return;
+        return true;
       }
 
       await activeVideoElement.play().catch(() => {});
@@ -174,7 +179,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (typeof pipVideo.requestPictureInPicture === 'function' && pipDocument.pictureInPictureEnabled) {
         await pipVideo.requestPictureInPicture();
         syncPictureInPictureState(activeVideoElement);
-        return;
+        return true;
       }
 
       if (
@@ -184,7 +189,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       ) {
         pipVideo.webkitSetPresentationMode('picture-in-picture');
         syncPictureInPictureState(activeVideoElement);
-        return;
+        return true;
       }
 
       throw new Error('PiP nÃ£o suportado pelo navegador atual.');
@@ -192,8 +197,46 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       console.error('[Player] Erro ao alternar PiP:', err);
       setError('NÃ£o foi possÃ­vel abrir o PiP neste dispositivo.');
       window.setTimeout(() => setError(null), 3000);
+      return false;
     }
   }, [activeVideoElement, syncPictureInPictureState]);
+
+  const togglePictureInPicture = React.useCallback(async () => {
+    if (!activeVideoElement || typeof document === 'undefined') {
+      return;
+    }
+
+    const pipDocument = document as Document & {
+      pictureInPictureElement?: Element | null;
+      exitPictureInPicture?: () => Promise<void>;
+    };
+    const pipVideo = activeVideoElement as HTMLVideoElement & {
+      webkitSetPresentationMode?: (mode: string) => void;
+      webkitPresentationMode?: string;
+    };
+
+    try {
+      if (pipDocument.pictureInPictureElement && pipDocument.exitPictureInPicture) {
+        await pipDocument.exitPictureInPicture();
+        syncPictureInPictureState(activeVideoElement);
+        return;
+      }
+
+      if (pipVideo.webkitPresentationMode === 'picture-in-picture' && pipVideo.webkitSetPresentationMode) {
+        pipVideo.webkitSetPresentationMode('inline');
+        syncPictureInPictureState(activeVideoElement);
+        return;
+      }
+
+      await enterPictureInPicture();
+    } catch (err) {
+      console.error('[Player] Erro ao alternar PiP:', err);
+    }
+  }, [activeVideoElement, enterPictureInPicture, syncPictureInPictureState]);
+
+  useImperativeHandle(ref, () => ({
+    enterPictureInPicture,
+  }), [enterPictureInPicture]);
 
   useEffect(() => {
     setActiveQualityIndex(0);
@@ -232,6 +275,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       activeVideoElement.removeEventListener('webkitpresentationmodechanged', handlePiPStateChange as EventListener);
     };
   }, [activeVideoElement, syncPictureInPictureState]);
+
+  useEffect(() => {
+    onPictureInPictureChange?.(isInPictureInPicture);
+  }, [isInPictureInPicture, onPictureInPictureChange]);
 
   // Auto-update strategy if the stream URL changes due to quality switch
   useEffect(() => {
@@ -339,8 +386,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       if (currentTime > 0 && duration > 0) {
         // Auto-resume from previous progress point on first load
-      if (currentTime > 0 && duration > 0) {
-        // Auto-resume from previous progress point on first load
         if (!initialSeekDone.current) {
           const allProgress = useStore.getState().playbackProgress;
           const savedProgress = allProgress[progressId];
@@ -365,7 +410,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           lastSyncedTime.current = currentTime;
           syncProgressToSupabase(userId, progressId, currentTime, duration);
         }
-      }
       }
 
       if (!onPlayNextEpisode) return;
@@ -1220,5 +1264,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       </div>
     </motion.div>
   );
-};
+});
+
+VideoPlayer.displayName = 'VideoPlayer';
 
