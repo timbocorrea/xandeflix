@@ -106,7 +106,6 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const isSearchMode = activeFilter === 'search';
   const isSearchIdle = isSearchMode && !searchQuery.trim();
   const isMobileLiveBrowser = activeFilter === 'live' && layout.isCompact;
-  const useInlineCatalogPlayback = activeFilter === 'movie' || activeFilter === 'series';
 
   // Local UI State
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -297,28 +296,14 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   const handleMediaPress = useCallback((media: Media) => {
     if (media.type === 'movie' || media.type === 'series') {
-      if (useInlineCatalogPlayback) {
-        handleInlineCatalogPlay(media);
-        return;
-      }
-
-      if (isBrowsing) {
-        // In browse mode, tap goes straight to player (no detail modal)
-        const playableMedia = resolvePlayableMedia(media);
-        if (playableMedia) {
-          handlePlay(playableMedia);
-        } else {
-          setDetailsMedia(media);
-          setIsDetailsVisible(true);
-        }
-      } else {
-        setDetailsMedia(media);
-        setIsDetailsVisible(true);
-      }
+      // Sempre carrega a página de detalhes para filmes e séries
+      setDetailsMedia(media);
+      setIsDetailsVisible(true);
     } else {
+      // Canais ao vivo tocam direto
       handlePlay(media);
     }
-  }, [handleInlineCatalogPlay, handlePlay, isBrowsing, resolvePlayableMedia, useInlineCatalogPlayback]);
+  }, [handlePlay]);
 
   const handleToggleMinimize = useCallback(() => {
     // Para Live TV no Desktop, o modo "navegação" é internamente controlado pelo LiveTVGrid.
@@ -546,7 +531,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     : browsePlayerHeight;
   const hideHeroSection =
     (activeFilter === 'live' && layout.isDesktop) ||
-    (!isDetachedToPiP && isBrowsing && useInlineCatalogPlayback);
+    (!isDetachedToPiP && isBrowsing);
   const mediaLookup = useMemo(() => {
     const map = new Map<string, Media>();
 

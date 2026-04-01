@@ -9,9 +9,9 @@ interface HeroSectionProps {
   media: Media | null;
   onPlay: (media: Media) => void;
   isAutoRotating: boolean;
-  onAutoRotate: () => void;
   focusedId: string | null;
   onFocus: (id: string) => void;
+  onInfo?: (media: Media) => void;
 }
 
 export const HeroSection: React.FC<HeroSectionProps> = React.memo(({ 
@@ -20,7 +20,8 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
   isAutoRotating, 
   onAutoRotate, 
   focusedId, 
-  onFocus 
+  onFocus,
+  onInfo
 }) => {
   const { width, height } = useWindowDimensions();
   const isMobile = width < 768;
@@ -210,6 +211,9 @@ export const HeroSection: React.FC<HeroSectionProps> = React.memo(({
               {!isMobile && (
                 <TouchableHighlight
                   onFocus={() => onFocus('hero-info')}
+                  onPress={() => onInfo?.(media)}
+                  // @ts-ignore
+                  onClick={() => onInfo?.(media)}
                   underlayColor="rgba(255,255,255,0.3)"
                   style={{
                     backgroundColor: 'rgba(255,255,255,0.2)',
