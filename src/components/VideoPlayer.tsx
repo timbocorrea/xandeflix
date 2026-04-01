@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import mpegts from 'mpegts.js';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
-import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings, Menu, Search, ChevronRight, ChevronLeft } from 'lucide-react';
+import { X, Play, ExternalLink, Layout, Maximize2, Minimize2, SkipForward, Rewind, FastForward, Settings, Menu, Search, ChevronRight, ChevronLeft, PictureInPicture2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Media, Category } from '../types';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
@@ -59,6 +59,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [loading, setLoading] = React.useState(true);
   const [diagnostic, setDiagnostic] = React.useState<any>(null);
   const [diagnosing, setDiagnosing] = React.useState(false);
+  const [activeVideoElement, setActiveVideoElement] = React.useState<HTMLVideoElement | null>(null);
+  const [isPictureInPictureSupported, setIsPictureInPictureSupported] = React.useState(false);
+  const [isInPictureInPicture, setIsInPictureInPicture] = React.useState(false);
   
   // Internal Source Override (for channel switching)
   const [internalUrl, setInternalUrl] = React.useState(url);
@@ -100,6 +103,98 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setInternalMedia(media);
   }, [url, media]);
 
+  const syncPictureInPictureState = React.useCallback((video: HTMLVideoElement | null) => {
+    if (typeof document === 'undefined' || !video) {
+      setIsPictureInPictureSupported(false);
+      setIsInPictureInPicture(false);
+      return;
+    }
+
+    const pipDocument = document as Document & {
+      pictureInPictureEnabled?: boolean;
+      pictureInPictureElement?: Element | null;
+    };
+    const pipVideo = video as HTMLVideoElement & {
+      disablePictureInPicture?: boolean;
+      webkitSupportsPresentationMode?: (mode: string) => boolean;
+      webkitPresentationMode?: string;
+    };
+
+    const supportsStandardPiP =
+      !!pipDocument.pictureInPictureEnabled &&
+      typeof (video as HTMLVideoElement & { requestPictureInPicture?: () => Promise<unknown> }).requestPictureInPicture === 'function' &&
+      !pipVideo.disablePictureInPicture;
+    const supportsWebkitPiP =
+      typeof pipVideo.webkitSupportsPresentationMode === 'function' &&
+      pipVideo.webkitSupportsPresentationMode('picture-in-picture');
+
+    setIsPictureInPictureSupported(supportsStandardPiP || supportsWebkitPiP);
+    setIsInPictureInPicture(
+      pipDocument.pictureInPictureElement === video ||
+      pipVideo.webkitPresentationMode === 'picture-in-picture'
+    );
+  }, []);
+
+  const togglePictureInPicture = React.useCallback(async () => {
+    if (!activeVideoElement || typeof document === 'undefined') {
+      return;
+    }
+
+    const pipDocument = document as Document & {
+      pictureInPictureEnabled?: boolean;
+      pictureInPictureElement?: Element | null;
+      exitPictureInPicture?: () => Promise<void>;
+    };
+    const pipVideo = activeVideoElement as HTMLVideoElement & {
+      requestPictureInPicture?: () => Promise<unknown>;
+      webkitSupportsPresentationMode?: (mode: string) => boolean;
+      webkitSetPresentationMode?: (mode: string) => void;
+      webkitPresentationMode?: string;
+    };
+
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen().catch(() => {});
+      }
+
+      if (pipDocument.pictureInPictureElement && pipDocument.exitPictureInPicture) {
+        await pipDocument.exitPictureInPicture();
+        syncPictureInPictureState(activeVideoElement);
+        return;
+      }
+
+      if (pipVideo.webkitPresentationMode === 'picture-in-picture' && pipVideo.webkitSetPresentationMode) {
+        pipVideo.webkitSetPresentationMode('inline');
+        syncPictureInPictureState(activeVideoElement);
+        return;
+      }
+
+      await activeVideoElement.play().catch(() => {});
+
+      if (typeof pipVideo.requestPictureInPicture === 'function' && pipDocument.pictureInPictureEnabled) {
+        await pipVideo.requestPictureInPicture();
+        syncPictureInPictureState(activeVideoElement);
+        return;
+      }
+
+      if (
+        typeof pipVideo.webkitSupportsPresentationMode === 'function' &&
+        pipVideo.webkitSupportsPresentationMode('picture-in-picture') &&
+        pipVideo.webkitSetPresentationMode
+      ) {
+        pipVideo.webkitSetPresentationMode('picture-in-picture');
+        syncPictureInPictureState(activeVideoElement);
+        return;
+      }
+
+      throw new Error('PiP nÃ£o suportado pelo navegador atual.');
+    } catch (err) {
+      console.error('[Player] Erro ao alternar PiP:', err);
+      setError('NÃ£o foi possÃ­vel abrir o PiP neste dispositivo.');
+      window.setTimeout(() => setError(null), 3000);
+    }
+  }, [activeVideoElement, syncPictureInPictureState]);
+
   useEffect(() => {
     setActiveQualityIndex(0);
     setShowQualityMenu(false);
@@ -117,6 +212,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       setIsSidebarOpen(false);
     }
   }, [showChannelSidebar, isSidebarOpen]);
+
+  useEffect(() => {
+    syncPictureInPictureState(activeVideoElement);
+
+    if (!activeVideoElement) {
+      return;
+    }
+
+    const handlePiPStateChange = () => syncPictureInPictureState(activeVideoElement);
+
+    activeVideoElement.addEventListener('enterpictureinpicture', handlePiPStateChange as EventListener);
+    activeVideoElement.addEventListener('leavepictureinpicture', handlePiPStateChange as EventListener);
+    activeVideoElement.addEventListener('webkitpresentationmodechanged', handlePiPStateChange as EventListener);
+
+    return () => {
+      activeVideoElement.removeEventListener('enterpictureinpicture', handlePiPStateChange as EventListener);
+      activeVideoElement.removeEventListener('leavepictureinpicture', handlePiPStateChange as EventListener);
+      activeVideoElement.removeEventListener('webkitpresentationmodechanged', handlePiPStateChange as EventListener);
+    };
+  }, [activeVideoElement, syncPictureInPictureState]);
 
   // Auto-update strategy if the stream URL changes due to quality switch
   useEffect(() => {
@@ -374,6 +489,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, []);
 
   function destroyPlayer() {
+    setActiveVideoElement(null);
+    setIsInPictureInPicture(false);
+    setIsPictureInPictureSupported(false);
     if (playerRef.current) {
       try {
         if (playerRef.current.destroy) playerRef.current.destroy(); // mpegts
@@ -458,6 +576,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     player.attachMediaElement(video);
     player.load();
     video.controls = !isPreview;
+    setActiveVideoElement(video);
     const playResult = player.play();
     if (playResult && typeof playResult.catch === 'function') {
       playResult.catch(() => { /* autoplay blocked, user will click */ });
@@ -504,6 +623,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       vjsVideo.className = 'video-js vjs-big-play-centered vjs-theme-city';
       vjsVideo.setAttribute('crossorigin', 'anonymous');
       containerRef.current.appendChild(vjsVideo);
+      setActiveVideoElement(vjsVideo);
 
       const player = videojs(vjsVideo, {
         autoplay: true,
@@ -559,6 +679,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.src = streamUrl;
     video.autoplay = true;
     video.controls = !isPreview;
+    setActiveVideoElement(video);
 
     const onPlaying = () => setLoading(false);
     const onWaiting = () => setLoading(true);
@@ -650,6 +771,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         
         {!isMinimized && (
           <>
+            {isPictureInPictureSupported && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  togglePictureInPicture();
+                }}
+                className={`p-3 backdrop-blur-xl border border-white/10 rounded-2xl transition-all duration-300 group shadow-lg ${
+                  isInPictureInPicture ? 'bg-white/20 text-white' : 'bg-black/40 text-white hover:bg-white/10'
+                }`}
+                title={isInPictureInPicture ? 'Fechar PiP' : 'Abrir em PiP'}
+              >
+                <PictureInPicture2 className="w-6 h-6" />
+              </button>
+            )}
             {hasQualities && (
               <div className="relative">
                 <button 

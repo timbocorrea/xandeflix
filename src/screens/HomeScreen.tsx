@@ -37,6 +37,26 @@ const LiveTVMobileBrowser = lazy(() =>
 );
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
+const HOME_HISTORY_MARKER = '__xandeflixHomeNav';
+
+type PlayerHistoryState = {
+  mediaId: string;
+  videoUrl: string;
+  type: 'live' | 'movie' | 'series';
+  title: string;
+  displayMode: 'inline' | 'fullscreen';
+  isMinimized: boolean;
+  currentEpisodeId: string | null;
+  currentSeasonNumber: number | null;
+};
+
+type HomeHistorySnapshot = {
+  activeFilter: string;
+  isSettingsVisible: boolean;
+  detailsMediaId: string | null;
+  gridCategoryId: string | null;
+  player: PlayerHistoryState | null;
+};
 
 const CategoryRowSkeleton = ({ layout }: { layout: any; key?: any }) => {
   const cardWidth = layout.isMobile ? 148 : layout.isTablet ? 180 : 220;
@@ -464,6 +484,186 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     ? Math.round(layout.width * 0.4 * 9 / 16)
     : Math.round(layout.width * 0.35 * 9 / 16);
   const hideHeroSection = (activeFilter === 'live' && layout.isDesktop) || (isBrowsing && useInlineCatalogPlayback);
+  const mediaLookup = useMemo(() => {
+    const map = new Map<string, Media>();
+
+    allCategories.forEach((category) => {
+      category.items.forEach((item) => {
+        if (!map.has(item.id)) {
+          map.set(item.id, item);
+        }
+      });
+    });
+
+    return map;
+  }, [allCategories]);
+  const categoryLookup = useMemo(
+    () => new Map(allCategories.map((category) => [category.id, category])),
+    [allCategories]
+  );
+  const historyReadyRef = useRef(false);
+  const historyDepthRef = useRef(0);
+  const lastSnapshotKeyRef = useRef<string | null>(null);
+  const isApplyingHistoryRef = useRef(false);
+
+  const buildPlayerHistoryState = useCallback((): PlayerHistoryState | null => {
+    if (!playingMedia || !activeVideoUrl || !videoType) {
+      return null;
+    }
+
+    return {
+      mediaId: playingMedia.id,
+      videoUrl: activeVideoUrl,
+      type: videoType,
+      title: playingMedia.title,
+      displayMode: isBrowsing || isMobileLiveBrowser ? 'inline' : 'fullscreen',
+      isMinimized: isPlayerMinimized,
+      currentEpisodeId: playingMedia.currentEpisode?.id ?? null,
+      currentSeasonNumber: playingMedia.currentSeasonNumber ?? null,
+    };
+  }, [activeVideoUrl, isBrowsing, isMobileLiveBrowser, isPlayerMinimized, playingMedia, videoType]);
+
+  const resolveHistoryPlayer = useCallback((playerState: PlayerHistoryState | null): Media | null => {
+    if (!playerState) {
+      return null;
+    }
+
+    const baseMedia = mediaLookup.get(playerState.mediaId);
+    if (!baseMedia) {
+      return null;
+    }
+
+    const resolvedMedia: Media = {
+      ...baseMedia,
+      title: playerState.title || baseMedia.title,
+      videoUrl: playerState.videoUrl || baseMedia.videoUrl,
+    };
+
+    if (!playerState.currentEpisodeId || !baseMedia.seasons?.length) {
+      return resolvedMedia;
+    }
+
+    const resolvedEpisode = baseMedia.seasons
+      .flatMap((season) => season.episodes)
+      .find((episode) => episode.id === playerState.currentEpisodeId);
+
+    if (!resolvedEpisode) {
+      return resolvedMedia;
+    }
+
+    return {
+      ...resolvedMedia,
+      currentEpisode: resolvedEpisode,
+      currentSeasonNumber: playerState.currentSeasonNumber ?? resolvedEpisode.seasonNumber,
+      videoUrl: playerState.videoUrl || resolvedEpisode.videoUrl,
+      title: playerState.title || `${baseMedia.title} - ${resolvedEpisode.title}`,
+    };
+  }, [mediaLookup]);
+
+  const navigationSnapshot = useMemo<HomeHistorySnapshot>(() => ({
+    activeFilter,
+    isSettingsVisible,
+    detailsMediaId: isDetailsVisible ? detailsMedia?.id ?? null : null,
+    gridCategoryId: gridCategory?.id ?? null,
+    player: buildPlayerHistoryState(),
+  }), [
+    activeFilter,
+    buildPlayerHistoryState,
+    detailsMedia?.id,
+    gridCategory?.id,
+    isDetailsVisible,
+    isSettingsVisible,
+  ]);
+
+  const restoreSnapshot = useCallback((snapshot: HomeHistorySnapshot) => {
+    isApplyingHistoryRef.current = true;
+
+    const restoredDetailsMedia = snapshot.detailsMediaId ? mediaLookup.get(snapshot.detailsMediaId) ?? null : null;
+    const restoredGridCategory = snapshot.gridCategoryId ? categoryLookup.get(snapshot.gridCategoryId) ?? null : null;
+    const restoredPlayerMedia = resolveHistoryPlayer(snapshot.player);
+
+    setActiveFilter(snapshot.activeFilter);
+    setIsSettingsVisible(snapshot.isSettingsVisible);
+    setDetailsMedia(restoredDetailsMedia);
+    setIsDetailsVisible(!!restoredDetailsMedia);
+    setGridCategory(restoredGridCategory);
+    setPlayingMedia(restoredPlayerMedia);
+    setActiveVideoUrl(snapshot.player?.videoUrl ?? null);
+    setVideoType(snapshot.player?.type ?? null);
+    setIsPlayerMinimized(snapshot.player?.isMinimized ?? false);
+
+    if (!snapshot.player || snapshot.player.displayMode === 'inline') {
+      try {
+        if (typeof document !== 'undefined' && document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      } catch (e) {}
+    }
+
+    window.setTimeout(() => {
+      isApplyingHistoryRef.current = false;
+      lastSnapshotKeyRef.current = JSON.stringify(snapshot);
+    }, 0);
+  }, [
+    categoryLookup,
+    mediaLookup,
+    resolveHistoryPlayer,
+    setActiveFilter,
+    setIsSettingsVisible,
+  ]);
+
+  const navigateBackInApp = useCallback((fallbackAction: () => void) => {
+    if (typeof window !== 'undefined' && historyDepthRef.current > 0) {
+      window.history.back();
+      return;
+    }
+
+    fallbackAction();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const snapshotKey = JSON.stringify(navigationSnapshot);
+
+    if (!historyReadyRef.current) {
+      window.history.replaceState({ [HOME_HISTORY_MARKER]: true, snapshot: navigationSnapshot }, '', window.location.href);
+      historyReadyRef.current = true;
+      historyDepthRef.current = 0;
+      lastSnapshotKeyRef.current = snapshotKey;
+      return;
+    }
+
+    if (isApplyingHistoryRef.current || snapshotKey === lastSnapshotKeyRef.current) {
+      return;
+    }
+
+    window.history.pushState({ [HOME_HISTORY_MARKER]: true, snapshot: navigationSnapshot }, '', window.location.href);
+    historyDepthRef.current += 1;
+    lastSnapshotKeyRef.current = snapshotKey;
+  }, [navigationSnapshot]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      const nextState = event.state;
+
+      if (!nextState?.[HOME_HISTORY_MARKER]) {
+        return;
+      }
+
+      historyDepthRef.current = Math.max(0, historyDepthRef.current - 1);
+      restoreSnapshot(nextState.snapshot as HomeHistorySnapshot);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [restoreSnapshot]);
 
   return (
     <View style={[styles.container, (isBrowsing || isMobileLiveBrowser) && { flexDirection: 'column' }]}>
@@ -535,7 +735,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               media={playingMedia}
               nextEpisode={nextEpisode}
               onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
-              onClose={() => {
+              onClose={() => navigateBackInApp(() => {
                 setActiveVideoUrl(null);
                 setPlayingMedia(null);
                 setIsPlayerMinimized(false);
@@ -544,7 +744,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                     document.exitFullscreen().catch(() => {});
                   }
                 } catch (e) {}
-              }}
+              })}
               isMinimized={false}
               onToggleMinimize={handleToggleMinimize}
               isBrowseMode={true}
@@ -561,11 +761,11 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             activeVideoUrl={playingMedia?.type === 'live' ? activeVideoUrl : null}
             layout={layout}
             onSelectChannel={handleInlineLivePlay}
-            onClosePlayer={() => {
+            onClosePlayer={() => navigateBackInApp(() => {
               setActiveVideoUrl(null);
               setPlayingMedia(null);
               setIsPlayerMinimized(false);
-            }}
+            })}
           />
         </Suspense>
       ) : (
@@ -812,7 +1012,10 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             <MediaDetailsPage
               key={detailsMedia.id}
               media={detailsMedia}
-              onClose={() => setIsDetailsVisible(false)}
+              onClose={() => navigateBackInApp(() => {
+                setIsDetailsVisible(false);
+                setDetailsMedia(null);
+              })}
               onPlay={handlePlay}
               onSelectMedia={setDetailsMedia}
             />
@@ -833,7 +1036,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               media={playingMedia}
               nextEpisode={nextEpisode}
               onPlayNextEpisode={nextEpisode ? () => handlePlay(nextEpisode) : undefined}
-              onClose={() => {
+              onClose={() => navigateBackInApp(() => {
                 setActiveVideoUrl(null);
                 setPlayingMedia(null);
                 setIsPlayerMinimized(false);
@@ -842,7 +1045,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                     document.exitFullscreen().catch(() => {});
                   }
                 } catch (e) {}
-              }}
+              })}
               isMinimized={false}
               onToggleMinimize={handleToggleMinimize}
             />
@@ -855,7 +1058,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           <Suspense fallback={null}>
             <CategoryGridView 
               category={gridCategory}
-              onClose={() => setGridCategory(null)}
+              onClose={() => navigateBackInApp(() => setGridCategory(null))}
               onSelectMedia={(media) => {
                 setGridCategory(null);
                 handleMediaPress(media);
@@ -867,7 +1070,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
       <SettingsModal
         isVisible={isSettingsVisible}
-        onClose={() => setIsSettingsVisible(false)}
+        onClose={() => navigateBackInApp(() => setIsSettingsVisible(false))}
         onSave={handleSaveSettings}
         currentUrl={""}
         onLogout={onLogout}

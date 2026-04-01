@@ -35,12 +35,23 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
   const [isExpanded, setIsExpanded] = useState(false);
   const [focusedItem, setFocusedItem] = useState<string | null>(null);
 
+  const collapseMenu = () => {
+    setIsExpanded(false);
+    setFocusedItem(null);
+
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  };
+
   const handleFocus = (id: string) => {
     setIsExpanded(true);
     setFocusedItem(id);
   };
 
   const handlePress = (id: string) => {
+    collapseMenu();
+
     if (onSelect) {
       onSelect(id);
     }
@@ -150,7 +161,10 @@ export const SideMenu: React.FC<SideMenuProps> = ({ onSelect, activeId = 'home',
         <button
           onFocus={() => handleFocus('logout')}
           onBlur={handleBlur}
-          onClick={() => onLogout?.()}
+          onClick={() => {
+            collapseMenu();
+            onLogout?.();
+          }}
           className={cn(
             "w-full flex flex-row items-center p-3 rounded-xl transition-all duration-300 cursor-pointer group outline-none border-none bg-transparent text-left",
             focusedItem === 'logout' ? "bg-red-600/20" : "hover:bg-red-600/10"
