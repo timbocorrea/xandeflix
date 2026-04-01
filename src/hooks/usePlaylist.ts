@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { MOCK_CATEGORIES } from '../mock/data';
-import { M3UParser } from '../lib/m3uParser';
 
 export type PlaylistStatus = 
   | 'idle'
@@ -78,13 +77,17 @@ export const usePlaylist = () => {
          throw new Error('Nenhuma URL de playlist configurada.');
       }
 
-      console.log(`[Playlist] Buscando conteúdo bruto em: ${playlistUrl}`);
+      const fetchUrl = `/api/proxy-playlist?url=${encodeURIComponent(playlistUrl)}`;
+      console.log(`[Playlist] Buscando conteúdo através do proxy: ${fetchUrl}`);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-      const response = await fetch(playlistUrl, {
+      const response = await fetch(fetchUrl, {
         signal: controller.signal,
+        headers: {
+          'x-auth-token': authToken
+        }
       });
       clearTimeout(timeoutId);
       
@@ -94,14 +97,36 @@ export const usePlaylist = () => {
       
       const m3uRawText = await response.text();
       
-      // 3. Parse content client-side
-      const parsedCategories = M3UParser.parse(m3uRawText);
+      // 3. Parse content client-side using a BACKGROUND WORKER (to keep UI thread at 60fps)
+      console.log(`[Playlist] Conteúdo baixado. Delegando processamento para o Web Worker...`);
+      
+      const parsedCategories = await new Promise<any[]>((resolve, reject) => {
+        const worker = new Worker(new URL('../workers/m3u.worker.ts', import.meta.url), { type: 'module' });
+        
+        worker.onmessage = (e) => {
+          if (e.data.success) {
+            resolve(e.data.data);
+          } else {
+            console.error(`[Playlist] Falha no processamento pelo worker:`, e.data.error);
+            reject(new Error(e.data.error || 'Erro no worker de parsing'));
+          }
+          worker.terminate();
+        };
+
+        worker.onerror = (err) => {
+          console.error(`[Playlist] Erro crítico no worker:`, err);
+          reject(new Error('Falha catastrófica no worker de processamento'));
+          worker.terminate();
+        };
+
+        worker.postMessage({ m3uText: m3uRawText });
+      });
       
       if (parsedCategories.length > 0) {
         setAllCategories(parsedCategories);
         setIsUsingMock(false);
         setPlaylistStatus('success');
-        console.log(`[Playlist] ✅ Processado no cliente: ${parsedCategories.length} categorias.`);
+        console.log(`[Playlist] ✅ Processado em Background: ${parsedCategories.length} categorias.`);
       } else if (!hasData) {
         console.warn('[Playlist] Resposta vazia ou inválida. Usando dados MOCK.');
         setAllCategories(MOCK_CATEGORIES);

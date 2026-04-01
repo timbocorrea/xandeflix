@@ -105,9 +105,12 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setMediaOverrides(user.mediaOverrides || {});
     setPreviewLoading(true);
     try {
-      const response = await fetch(user.playlistUrl);
+      const fetchUrl = `/api/proxy-playlist?url=${encodeURIComponent(user.playlistUrl)}`;
+      const response = await fetch(fetchUrl, {
+        headers: { 'x-auth-token': authToken }
+      });
       if (!response.ok) {
-        throw new Error('Não foi possível carregar o arquivo da lista diretamente do provedor.');
+        throw new Error('Não foi possível carregar o arquivo da lista através do proxy.');
       }
       const m3uText = await response.text();
       const parsedCategories = M3UParser.parse(m3uText);

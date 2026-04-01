@@ -162,6 +162,40 @@ app.use(compression());
 app.use(securityHeadersMiddleware);
 
 /**
+ * API Route: Proxy playlist content to avoid CORS issues
+ */
+app.get('/api/proxy-playlist', async (req, res) => {
+  try {
+    const session = AuthSessionService.getSession(getRequestAuthToken(req));
+    if (!session) {
+      return res.status(401).json({ error: 'Sessão inválida ou não autorizado' });
+    }
+
+    const playlistUrl = req.query.url as string;
+    if (!playlistUrl) {
+      return res.status(400).json({ error: 'URL da playlist é obrigatória' });
+    }
+
+    console.log(`[PROXY] Buscando conteúdo para: ${playlistUrl.substring(0, 50)}... [Role: ${session.role}]`);
+
+    const response = await axios.get(playlistUrl, {
+      timeout: 30000,
+      responseType: 'text',
+      headers: {
+        'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+        'Accept': '*/*',
+      }
+    });
+
+    res.header('Content-Type', 'text/plain');
+    res.send(response.data);
+  } catch (error: any) {
+    console.error('[PROXY] Erro ao buscar playlist remota:', error.message);
+    res.status(500).json({ error: 'Falha ao buscar conteúdo remoto', details: error.message });
+  }
+});
+
+/**
  * API Route: Get metadata for a specific media from TMDB
  */
 app.get('/api/metadata', async (req, res) => {
