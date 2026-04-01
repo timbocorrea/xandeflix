@@ -31,6 +31,8 @@ type PlayerTelemetrySummary = {
   enabled: boolean;
   windowHours: number;
   storage: 'supabase' | 'unavailable';
+  setupRequired?: boolean;
+  message?: string;
   overview: {
     reportCount: number;
     affectedChannels: number;
@@ -436,6 +438,12 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
               <div style={{ textAlign: 'center', padding: 32, color: '#00BBFF' }}>Carregando telemetria...</div>
             ) : telemetrySummary ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                {telemetrySummary.message && (
+                  <div style={telemetrySummary.setupRequired ? s.telemetrySetupBanner : s.telemetryInfoBanner}>
+                    {telemetrySummary.message}
+                  </div>
+                )}
+
                 <div style={s.telemetryMetaRow}>
                   <div style={s.telemetryMetaPill}>
                     Janela analisada: {telemetrySummary.windowHours}h
@@ -498,7 +506,9 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                   </div>
                 ) : (
                   <div style={s.telemetryEmptyState}>
-                    Nenhuma anomalia relevante foi registrada na janela atual.
+                    {telemetrySummary.setupRequired
+                      ? 'A telemetria ainda nao foi inicializada no banco.'
+                      : 'Nenhuma anomalia relevante foi registrada na janela atual.'}
                   </div>
                 )}
               </div>
@@ -1074,6 +1084,24 @@ const s: Record<string, React.CSSProperties> = {
     border: '1px solid rgba(239,68,68,0.25)',
     backgroundColor: 'rgba(127,29,29,0.35)',
     color: '#FCA5A5',
+    fontSize: 14,
+    fontWeight: 600,
+  },
+  telemetrySetupBanner: {
+    padding: '12px 14px',
+    borderRadius: 10,
+    border: '1px solid rgba(245,158,11,0.25)',
+    backgroundColor: 'rgba(120,53,15,0.35)',
+    color: '#FCD34D',
+    fontSize: 14,
+    fontWeight: 600,
+  },
+  telemetryInfoBanner: {
+    padding: '12px 14px',
+    borderRadius: 10,
+    border: '1px solid rgba(59,130,246,0.25)',
+    backgroundColor: 'rgba(30,58,138,0.28)',
+    color: '#93C5FD',
     fontSize: 14,
     fontWeight: 600,
   },

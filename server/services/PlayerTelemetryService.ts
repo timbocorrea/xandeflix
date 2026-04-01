@@ -58,6 +58,16 @@ interface TelemetryOverview {
   fatalErrorCount: number;
 }
 
+interface TelemetrySummaryResponse {
+  enabled: boolean;
+  windowHours: number;
+  storage: 'supabase' | 'unavailable';
+  overview: TelemetryOverview;
+  channels: TelemetryChannelSummary[];
+  setupRequired?: boolean;
+  message?: string;
+}
+
 interface TelemetryChannelSummary {
   key: string;
   mediaId: string;
@@ -106,6 +116,19 @@ function buildProblemScore(channel: TelemetryChannelSummary): number {
     channel.manualRetryCount * 2 +
     channel.bufferEventCount * 0.3 +
     channel.bufferSeconds / 30
+  );
+}
+
+function isTelemetryTableMissing(error: any): boolean {
+  const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+  const details = typeof error?.details === 'string' ? error.details.toLowerCase() : '';
+  const code = typeof error?.code === 'string' ? error.code.toUpperCase() : '';
+
+  return (
+    code === 'PGRST205' ||
+    code === '42P01' ||
+    message.includes("player_telemetry_reports") && message.includes('schema cache') ||
+    details.includes("player_telemetry_reports") && details.includes('schema cache')
   );
 }
 
@@ -207,19 +230,17 @@ export class PlayerTelemetryService {
       });
 
     if (error) {
+      if (isTelemetryTableMissing(error)) {
+        console.warn('[TELEMETRY] Tabela player_telemetry_reports ausente. Execute o SQL de setup no Supabase.');
+        return { stored: false, reason: 'schema_missing' };
+      }
       throw error;
     }
 
     return { stored: true };
   }
 
-  public static async getSummary(windowHours = DEFAULT_WINDOW_HOURS): Promise<{
-    enabled: boolean;
-    windowHours: number;
-    storage: 'supabase' | 'unavailable';
-    overview: TelemetryOverview;
-    channels: TelemetryChannelSummary[];
-  }> {
+  public static async getSummary(windowHours = DEFAULT_WINDOW_HOURS): Promise<TelemetrySummaryResponse> {
     const safeWindowHours = Math.round(clampNumber(windowHours, 1, MAX_WINDOW_HOURS));
     const overview: TelemetryOverview = {
       reportCount: 0,
@@ -243,6 +264,9 @@ export class PlayerTelemetryService {
         storage: 'unavailable',
         overview,
         channels: [],
+        message: !this.enabled
+          ? 'Telemetria desativada por configuracao.'
+          : 'Supabase indisponivel para leitura da telemetria.',
       };
     }
 
@@ -257,6 +281,17 @@ export class PlayerTelemetryService {
       .limit(5000);
 
     if (error) {
+      if (isTelemetryTableMissing(error)) {
+        return {
+          enabled: this.enabled,
+          windowHours: safeWindowHours,
+          storage: 'unavailable',
+          overview,
+          channels: [],
+          setupRequired: true,
+          message: 'A tabela player_telemetry_reports ainda nao existe no Supabase. Execute o SQL de setup para habilitar a telemetria.',
+        };
+      }
       throw error;
     }
 
