@@ -160,6 +160,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
   // isBrowsing: player docked at top, content browser below
   const isBrowsing = !!activeVideoUrl && isPlayerMinimized;
+  const isPinnedPlayerLayout = isBrowsing || isMobileLiveBrowser;
 
   // Handle play action
   const handlePlay = useCallback(async (media: Media) => {
@@ -622,6 +623,29 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtmlOverflow = html.style.overflow;
+    const previousBodyOverflow = body.style.overflow;
+
+    if (isPinnedPlayerLayout) {
+      html.style.overflow = 'hidden';
+      body.style.overflow = 'hidden';
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+    }
+
+    return () => {
+      html.style.overflow = previousHtmlOverflow;
+      body.style.overflow = previousBodyOverflow;
+    };
+  }, [isPinnedPlayerLayout]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
@@ -666,7 +690,16 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, [restoreSnapshot]);
 
   return (
-    <View style={[styles.container, (isBrowsing || isMobileLiveBrowser) && { flexDirection: 'column' }]}>
+    <View
+      style={[
+        styles.container,
+        isPinnedPlayerLayout && {
+          flexDirection: 'column',
+          height: layout.height,
+          overflow: 'hidden',
+        },
+      ]}
+    >
       {/* Loading State Overlay */}
       <AnimatePresence>
         {loading && allCategories.length === 0 && (
@@ -1088,6 +1121,7 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+    minHeight: 0,
   },
   scrollContent: {
     paddingLeft: 120, // Space for SideMenu

@@ -360,6 +360,7 @@ const styles = StyleSheet.create({
   },
   listBlock: {
     flex: 1,
+    minHeight: 0,
   },
   searchShell: {
     flexDirection: 'row',
@@ -382,6 +383,7 @@ const styles = StyleSheet.create({
   },
   scrollArea: {
     flex: 1,
+    minHeight: 0,
   },
   scrollContent: {
     gap: 12,

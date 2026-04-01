@@ -287,6 +287,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isIdle, setIsIdle] = React.useState(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showQualityMenu, setShowQualityMenu] = React.useState(false);
+  const shouldHideControls =
+    isIdle &&
+    !isPreview &&
+    !isSidebarOpen &&
+    !showQualityMenu &&
+    !loading &&
+    !error;
 
   const resetIdleTimer = React.useCallback(() => {
     setIsIdle(false);
@@ -299,22 +306,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Idle user detection for overlay controls
   useEffect(() => {
+    if (isPreview) {
+      return;
+    }
+
     resetIdleTimer();
-    const handleActivity = () => resetIdleTimer();
+    const handleKeyboardActivity = () => resetIdleTimer();
     
-    window.addEventListener('mousemove', handleActivity);
-    window.addEventListener('mousedown', handleActivity);
-    window.addEventListener('touchstart', handleActivity);
-    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('keydown', handleKeyboardActivity);
 
     return () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
-      window.removeEventListener('mousemove', handleActivity);
-      window.removeEventListener('mousedown', handleActivity);
-      window.removeEventListener('touchstart', handleActivity);
-      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('keydown', handleKeyboardActivity);
     };
-  }, [resetIdleTimer]);
+  }, [isPreview, resetIdleTimer]);
 
   // Poll video time to show Up Next 10 seconds BEFORE video ends
   useEffect(() => {
@@ -741,11 +746,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       } ${
         isIdle && !isPreview && !isBrowseMode ? 'cursor-none' : ''
       }`}
+      onMouseMove={!isPreview ? resetIdleTimer : undefined}
+      onMouseDown={!isPreview ? resetIdleTimer : undefined}
+      onTouchStart={!isPreview ? resetIdleTimer : undefined}
+      onClick={!isPreview ? resetIdleTimer : undefined}
     >
       {!isPreview && (
         <div 
           className={`absolute z-[110] flex flex-wrap justify-end gap-3 transition-opacity duration-500 delay-100 ${
-            isIdle && (!isMinimized && !isBrowseMode) ? 'opacity-0 pointer-events-none' : 'opacity-100'
+            shouldHideControls ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
         style={{
           top: controlSafeTop,
