@@ -476,8 +476,9 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     }
 
     setActiveFilter(filter);
+    setGridCategory(null);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
-  }, [activeFilter, activeVideoUrl, detachPlaybackToPiP, setActiveFilter, setIsAdminMode, setIsSettingsVisible, setSearchQuery]);
+  }, [activeFilter, activeVideoUrl, detachPlaybackToPiP, setActiveFilter, setIsAdminMode, setIsSettingsVisible, setSearchQuery, setGridCategory]);
 
   const handleSaveSettings = useCallback((url: string, newHiddenIds: string[]) => {
     setHiddenCategoryIds(newHiddenIds);

@@ -26,11 +26,11 @@ const GridItem = React.memo(({ item, onPress, index, cardWidth, isCompact }: Gri
     return null;
   }
 
-  const displayImage = imgError
-    ? 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop'
-    : (tmdbData?.thumbnail || item.thumbnail);
+  const fallbackImg = 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=400&auto=format&fit=crop';
+  const targetImage = tmdbData?.thumbnail || item.thumbnail;
+  const displayImage = imgError || !targetImage ? fallbackImg : targetImage;
 
-  const displayMode = (tmdbData?.thumbnail || imgError) ? 'cover' : 'contain';
+  const displayMode = (tmdbData?.thumbnail || imgError || !targetImage) ? 'cover' : 'contain';
 
   return (
     <motion.div
@@ -179,7 +179,6 @@ export const CategoryGridView: React.FC<CategoryGridViewProps> = ({ category, on
         key={`grid-${columns}`}
         columnWrapperStyle={[styles.gridColumnWrapper, { gap: gridGap, marginBottom: gridGap }]}
         showsVerticalScrollIndicator
-        removeClippedSubviews
         initialNumToRender={layout.isMobile ? 10 : 18}
         maxToRenderPerBatch={layout.isMobile ? 8 : 12}
         windowSize={layout.isMobile ? 4 : 5}
