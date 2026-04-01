@@ -19,12 +19,8 @@ export default function App() {
     let isMounted = true;
 
     const clearStoredSession = () => {
-      localStorage.removeItem('xandeflix_session');
-      localStorage.removeItem('xandeflix_playlist_url');
-      localStorage.removeItem('xandeflix_user_id');
-      localStorage.removeItem('xandeflix_auth_token');
-      localStorage.removeItem('xandeflix_auth_role');
-      localStorage.removeItem('xandeflix_admin_mode');
+      localStorage.clear();
+      sessionStorage.clear();
       setIsAdminMode(false);
       clearSessionState();
     };
@@ -117,15 +113,11 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('xandeflix_session');
-    localStorage.removeItem('xandeflix_playlist_url');
-    localStorage.removeItem('xandeflix_user_id');
-    localStorage.removeItem('xandeflix_auth_token');
-    localStorage.removeItem('xandeflix_auth_role');
-    localStorage.removeItem('xandeflix_admin_mode');
-    setIsAdminMode(false);
-    clearSessionState();
-    setIsAuthenticated(false);
+      localStorage.clear();
+      sessionStorage.clear();
+      setIsAdminMode(false);
+      clearSessionState();
+      setIsAuthenticated(false);
   };
 
   // When admin exits admin panel, check if there's a real user session

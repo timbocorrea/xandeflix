@@ -530,9 +530,20 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     }
   }, [internalMedia, sidebarCategories]);
 
-  // ── Cleanup on unmount ──
+  // ── Cleanup on unmount & page close ──
   useEffect(() => {
+    const handleUnload = () => {
+      destroyPlayer();
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    window.addEventListener('unload', handleUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+      window.removeEventListener('unload', handleUnload);
       destroyPlayer();
     };
   }, []);
@@ -541,12 +552,23 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     setActiveVideoElement(null);
     setIsInPictureInPicture(false);
     setIsPictureInPictureSupported(false);
+    
+    // Explicitly severe connections through the HLS/MpegTS drivers
     if (playerRef.current) {
       try {
-        if (playerRef.current.destroy) playerRef.current.destroy(); // mpegts
+        if (playerRef.current.destroy) playerRef.current.destroy(); // mpegts / hls.destroy()
         else if (playerRef.current.dispose) playerRef.current.dispose(); // videojs
       } catch (e) { /* ignore */ }
       playerRef.current = null;
+    }
+
+    // Explicitly severe standard Video API connections to force immediate socket drop
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+        videoRef.current.removeAttribute('src');
+        videoRef.current.load();
+      } catch (e) { /* ignore */ }
     }
   }
 

@@ -441,6 +441,11 @@ app.post('/api/auth/login', async (req, res) => {
       const sessionToken = AuthSessionService.issueSession(result.type, result.data?.id);
       if (result.type === 'user' && result.data?.playlistUrl) {
         registerAuthorizedDomainFromUrl(result.data.playlistUrl);
+        
+        // Limpa cache no backend ao logar para garantir dados 100% atualizados ("limpar vestigios")
+        const pUrl = result.data.playlistUrl;
+        if (playlistCache.has(pUrl)) playlistCache.delete(pUrl);
+        if (pendingRequests.has(pUrl)) pendingRequests.delete(pUrl);
       }
 
       const responseBody = {

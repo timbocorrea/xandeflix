@@ -26,6 +26,26 @@ export class CacheManager<T> {
   }
 
   /**
+   * Checks if a key exists and hasn't expired
+   */
+  public has(key: string): boolean {
+    const entry = this.cache.get(key);
+    if (!entry) return false;
+    if ((Date.now() - entry.timestamp) > this.defaultTtl) {
+      this.cache.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Deletes a specific key from the cache
+   */
+  public delete(key: string): void {
+    this.cache.delete(key);
+  }
+
+  /**
    * Sets a value in the cache with a timestamp
    */
   public set(key: string, data: T): void {
