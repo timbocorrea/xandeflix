@@ -348,7 +348,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   onPress={() => {
                     if (onLogout) onLogout();
                     else {
-                      localStorage.removeItem('xandeflix_playlist_url');
                       window.location.reload();
                     }
                   }}

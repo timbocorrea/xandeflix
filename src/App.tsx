@@ -7,6 +7,28 @@ const AdminPanel = lazy(() =>
   import('./screens/AdminPanel').then((module) => ({ default: module.AdminPanel })),
 );
 
+const XANDEFLIX_LOCAL_STORAGE_KEYS = [
+  'xandeflix_auth_token',
+  'xandeflix_auth_role',
+  'xandeflix_user_id',
+  'xandeflix_session',
+  'xandeflix-app-storage',
+] as const;
+
+function clearXandeflixStorage() {
+  XANDEFLIX_LOCAL_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+
+  const sessionKeysToRemove: string[] = [];
+  for (let index = 0; index < sessionStorage.length; index += 1) {
+    const key = sessionStorage.key(index);
+    if (key?.startsWith('xandeflix_')) {
+      sessionKeysToRemove.push(key);
+    }
+  }
+
+  sessionKeysToRemove.forEach((key) => sessionStorage.removeItem(key));
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isReady, setIsReady] = useState(false);
@@ -20,8 +42,7 @@ export default function App() {
     let isMounted = true;
 
     const clearStoredSession = () => {
-      localStorage.clear();
-      sessionStorage.clear();
+      clearXandeflixStorage();
       setIsAdminMode(false);
       clearSessionState();
     };
@@ -53,16 +74,12 @@ export default function App() {
         setIsAdminMode(role === 'admin');
 
         if (role === 'user' && session.data) {
-          if (session.data.playlistUrl) localStorage.setItem('xandeflix_playlist_url', session.data.playlistUrl);
-          else localStorage.removeItem('xandeflix_playlist_url');
-
           if (session.data.id) localStorage.setItem('xandeflix_user_id', session.data.id);
           else localStorage.removeItem('xandeflix_user_id');
 
           setAdultAccessSettings(session.data.adultAccess);
           hydrateProfileState(session.data.id);
         } else {
-          localStorage.removeItem('xandeflix_playlist_url');
           localStorage.removeItem('xandeflix_user_id');
           setAdultAccessSettings(null);
           clearSessionState();
@@ -90,10 +107,7 @@ export default function App() {
     };
   }, [clearSessionState, hydrateProfileState, setAdultAccessSettings, setIsAdminMode]);
 
-  const handleLoginSuccess = (playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => {
-    if (playlistUrl) localStorage.setItem('xandeflix_playlist_url', playlistUrl);
-    else localStorage.removeItem('xandeflix_playlist_url');
-
+  const handleLoginSuccess = (_playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => {
     if (userId) localStorage.setItem('xandeflix_user_id', userId);
     else localStorage.removeItem('xandeflix_user_id');
 
@@ -106,7 +120,6 @@ export default function App() {
     if (role === 'user') {
       hydrateProfileState(userId);
     } else {
-      localStorage.removeItem('xandeflix_playlist_url');
       localStorage.removeItem('xandeflix_user_id');
       clearSessionState();
     }
@@ -116,11 +129,10 @@ export default function App() {
   };
 
   const handleLogout = () => {
-      localStorage.clear();
-      sessionStorage.clear();
-      setIsAdminMode(false);
-      clearSessionState();
-      setIsAuthenticated(false);
+    clearXandeflixStorage();
+    setIsAdminMode(false);
+    clearSessionState();
+    setIsAuthenticated(false);
   };
 
   // When admin exits admin panel, check if there's a real user session

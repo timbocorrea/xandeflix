@@ -11,6 +11,7 @@ interface TMDBData {
 
 // Memory cache to avoid repeated requests for the same raw title
 const tmdbCache = new Map<string, TMDBData | null>();
+const inFlightRequests = new Map<string, Promise<TMDBData | null>>();
 
 /**
  * Custom hook to fetch rich metadata from TMDB via our local backend API.
@@ -31,8 +32,16 @@ export const useTMDB = (title: string | undefined, type: string | undefined) => 
       return;
     }
 
+    const { cleanTitle, year } = cleanMediaTitle(title);
+    const normalizedTitle = cleanTitle.trim();
+    if (!normalizedTitle) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
+
     // 1. Check Cache first
-    const cacheKey = `${type}:${title}`;
+    const cacheKey = `${type}:${normalizedTitle}:${year || 'none'}`;
     if (tmdbCache.has(cacheKey)) {
       setData(tmdbCache.get(cacheKey) || null);
       setLoading(false);
@@ -44,31 +53,36 @@ export const useTMDB = (title: string | undefined, type: string | undefined) => 
       setError(null);
       
       try {
-        // 2. Clean title and get year
-        const { cleanTitle, year } = cleanMediaTitle(title);
-        
-        let apiUrl = `/api/metadata?title=${encodeURIComponent(cleanTitle)}&type=${type}`;
+        let apiUrl = `/api/metadata?title=${encodeURIComponent(normalizedTitle)}&type=${type}`;
         if (year) {
           apiUrl += `&year=${year}`;
         }
 
-        const response = await fetch(apiUrl);
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch metadata');
+        let request = inFlightRequests.get(cacheKey);
+        if (!request) {
+          request = (async () => {
+            const response = await fetch(apiUrl);
+            
+            if (!response.ok) {
+              throw new Error('Failed to fetch metadata');
+            }
+            
+            const metadata = await response.json();
+            const result = metadata || null;
+            tmdbCache.set(cacheKey, result);
+            return result;
+          })();
+          inFlightRequests.set(cacheKey, request);
         }
-        
-        const metadata = await response.json();
-        const result = metadata || null;
-        
-        // 3. Save to Cache
-        tmdbCache.set(cacheKey, result);
+
+        const result = await request;
         setData(result);
       } catch (err: any) {
         console.warn(`[useTMDB] Error for "${title}":`, err.message);
         setError(err.message);
         setData(null);
       } finally {
+        inFlightRequests.delete(cacheKey);
         setLoading(false);
       }
     };

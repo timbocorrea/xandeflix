@@ -23,9 +23,9 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onComplete }) => {
     onComplete(url.trim());
   };
 
-  const useDefault = () => {
-    const DEFAULT_URL = 'http://dnsd1.space/get.php?username=952279118&password=823943744&type=m3u_plus&output=mpegts';
-    onComplete(DEFAULT_URL);
+  const fillExample = () => {
+    setUrl('https://seu-provedor.com/get.php?username=SEU_USUARIO&password=SUA_SENHA&type=m3u_plus&output=mpegts');
+    setError('');
   };
 
   return (
@@ -91,11 +91,11 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({ onComplete }) => {
                 </TouchableHighlight>
 
                 <TouchableHighlight
-                  onPress={useDefault}
+                  onPress={fillExample}
                   underlayColor="rgba(255,255,255,0.1)"
                   style={styles.secondaryButton}
                 >
-                  <Text style={styles.secondaryButtonText}>Usar Lista Padrão</Text>
+                  <Text style={styles.secondaryButtonText}>Usar Exemplo</Text>
                 </TouchableHighlight>
               </View>
             </View>

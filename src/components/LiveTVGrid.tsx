@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableHighlight, Image, Dimensions, FlatList, ListRenderItem } from 'react-native';
-import { Radio, ChevronRight, Play, Maximize2, Search } from 'lucide-react';
+import { Radio, ChevronRight, Play, Maximize2, Search, Heart } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Media } from '../types';
 import { VideoPlayer } from './VideoPlayer';
+import { useStore } from '../store/useStore';
 
 interface LiveTVGridProps {
   categories: Category[];
@@ -16,6 +17,7 @@ interface LiveTVGridProps {
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, layout, externalMedia, isGlobalPlayerActive }) => {
+  const favorites = useStore((state) => state.favorites);
   const liveCategories = useMemo(() => 
     categories.filter(c => c.type === 'live' && c.items.length > 0), 
     [categories]
@@ -137,36 +139,47 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
           initialNumToRender={15}
           maxToRenderPerBatch={10}
           windowSize={5}
-          renderItem={({ item: media }) => (
-            <TouchableHighlight
-              key={media.id}
-              onPress={() => handleMediaClick(media)}
-              underlayColor="rgba(255,255,255,0.05)"
-              style={[
-                styles.channelItem,
-                selectedMediaId === media.id && styles.channelItemActive
-              ]}
-            >
-              <View style={styles.channelItemInner}>
-                <View style={styles.itemThumbnailContainer}>
-                  <Image source={{ uri: media.thumbnail }} style={styles.itemThumbnail} />
-                  {selectedMediaId === media.id && (
-                    <View style={styles.playingIndicator}>
-                      <View style={styles.pulse} />
-                    </View>
-                  )}
+          renderItem={({ item: media }) => {
+            const isFavorite =
+              favorites.includes(media.videoUrl || `media:${media.id}`) ||
+              favorites.includes(media.id);
+
+            return (
+              <TouchableHighlight
+                key={media.id}
+                onPress={() => handleMediaClick(media)}
+                underlayColor="rgba(255,255,255,0.05)"
+                style={[
+                  styles.channelItem,
+                  selectedMediaId === media.id && styles.channelItemActive
+                ]}
+              >
+                <View style={styles.channelItemInner}>
+                  <View style={styles.itemThumbnailContainer}>
+                    <Image source={{ uri: media.thumbnail }} style={styles.itemThumbnail} />
+                    {isFavorite && (
+                      <View style={styles.favoriteBadge}>
+                        <Heart size={11} color="#ffffff" fill="#E50914" />
+                      </View>
+                    )}
+                    {selectedMediaId === media.id && (
+                      <View style={styles.playingIndicator}>
+                        <View style={styles.pulse} />
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.channelInfo}>
+                    <Text style={[styles.channelTitle, selectedMediaId === media.id && styles.channelTitleActive]} numberOfLines={1}>
+                      {media.title}
+                    </Text>
+                    <Text style={styles.channelSubtitle} numberOfLines={1}>
+                      {media.category}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.channelInfo}>
-                  <Text style={[styles.channelTitle, selectedMediaId === media.id && styles.channelTitleActive]} numberOfLines={1}>
-                    {media.title}
-                  </Text>
-                  <Text style={styles.channelSubtitle} numberOfLines={1}>
-                    {media.category}
-                  </Text>
-                </View>
-              </View>
-            </TouchableHighlight>
-          )}
+              </TouchableHighlight>
+            );
+          }}
         />
       </View>
 
@@ -348,6 +361,20 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     objectFit: 'contain',
+  },
+  favoriteBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
   },
   channelInfo: {
     flex: 1,

@@ -4,10 +4,16 @@ import { Category } from '../types';
 import { isAdultCategory } from '../lib/adultContent';
 
 export const useMediaFilter = () => {
-  const { allCategories, activeFilter, searchQuery, hiddenCategoryIds, favorites, adultAccess, isAdultUnlocked } = useStore();
+  const allCategories = useStore((state) => state.allCategories);
+  const activeFilter = useStore((state) => state.activeFilter);
+  const searchQuery = useStore((state) => state.searchQuery);
+  const hiddenCategoryIds = useStore((state) => state.hiddenCategoryIds);
+  const favorites = useStore((state) => state.favorites);
+  const adultAccessEnabled = useStore((state) => state.adultAccess.enabled);
+  const isAdultUnlocked = useStore((state) => state.isAdultUnlocked);
 
   const filteredCategories = useMemo(() => {
-    const adultLocked = !adultAccess.enabled || !isAdultUnlocked;
+    const adultLocked = !adultAccessEnabled || !isAdultUnlocked;
     const visibleCategories = allCategories.filter(
       (cat) => !hiddenCategoryIds.includes(cat.id) && (!adultLocked || !isAdultCategory(cat)),
     );
@@ -17,7 +23,10 @@ export const useMediaFilter = () => {
       .flatMap(cat => cat.items)
       // Filter out duplicates if same item exists in multiple categories
       .filter((item, index, self) => 
-        favorites.includes(item.id) && 
+        (
+          favorites.includes(item.videoUrl || `media:${item.id}`) ||
+          favorites.includes(item.id)
+        ) && 
         self.findIndex(t => t.id === item.id) === index
       );
 
@@ -67,7 +76,7 @@ export const useMediaFilter = () => {
     }
 
     return result;
-  }, [allCategories, activeFilter, searchQuery, hiddenCategoryIds, favorites, adultAccess.enabled, isAdultUnlocked]);
+  }, [allCategories, activeFilter, searchQuery, hiddenCategoryIds, favorites, adultAccessEnabled, isAdultUnlocked]);
 
   return { filteredCategories };
 };

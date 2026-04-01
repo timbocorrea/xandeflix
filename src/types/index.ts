@@ -43,6 +43,13 @@ export interface Category {
   items: Media[];
 }
 
+export interface EPGProgram {
+  title: string;
+  start: string;
+  stop: string;
+  desc: string;
+}
+
 export interface User {
   id: string;
   name: string;

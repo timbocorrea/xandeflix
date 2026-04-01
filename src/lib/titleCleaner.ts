@@ -49,6 +49,10 @@ export const cleanMediaTitle = (rawTitle: string): CleanedMedia => {
     .replace(/^[-.| ]+|[-.| ]+$/g, '') // Caracteres especiais no inicio/fim
     .trim();
 
+  if (title.length === 0) {
+    title = rawTitle.trim();
+  }
+
   return {
     cleanTitle: title,
     year,

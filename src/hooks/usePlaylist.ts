@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { MOCK_CATEGORIES } from '../mock/data';
-import { getPlaylistCache, savePlaylistCache } from '../lib/localCache';
+import { buildPlaylistCacheScope, getPlaylistCache, savePlaylistCache } from '../lib/localCache';
 
-export type PlaylistStatus = 
+export type PlaylistStatus =
   | 'idle'
   | 'loading_user_info'
   | 'loading_playlist'
@@ -19,23 +19,34 @@ export interface PlaylistError {
   playlistUrl?: string;
 }
 
+function describePlaylistSource(playlistUrl: string): string {
+  try {
+    return new URL(playlistUrl).host;
+  } catch {
+    return 'Lista vinculada';
+  }
+}
+
 export const usePlaylist = () => {
   const [loading, setLoading] = useState(false);
   const [playlistStatus, setPlaylistStatus] = useState<PlaylistStatus>('idle');
   const [playlistError, setPlaylistError] = useState<PlaylistError | null>(null);
   const [playlistSource, setPlaylistSource] = useState<string>('');
-  const { setAllCategories, setIsUsingMock, setAdultAccessSettings } = useStore();
+  const setAllCategories = useStore((state) => state.setAllCategories);
+  const setIsUsingMock = useStore((state) => state.setIsUsingMock);
+  const setAdultAccessSettings = useStore((state) => state.setAdultAccessSettings);
 
   const fetchPlaylist = useCallback(async () => {
     const hasData = useStore.getState().allCategories.length > 0;
-    
-    // Only show global loader if we don't have any data yet
+
     if (!hasData) setLoading(true);
     setPlaylistError(null);
-    
+
     const authToken = localStorage.getItem('xandeflix_auth_token') || '';
     const authRole = localStorage.getItem('xandeflix_auth_role') || '';
-    let playlistUrl = localStorage.getItem('xandeflix_playlist_url') || '';
+    let playlistUrl = '';
+    let cacheScope = '';
+    let hasValidatedUser = false;
 
     if (authRole === 'admin') {
       setLoading(false);
@@ -44,136 +55,145 @@ export const usePlaylist = () => {
     }
 
     try {
-      // 1. Initial Cache Check (Persistent Persistence Strategy)
-      const cached = await getPlaylistCache();
-      const CACHE_EXPIRATION_MS = 12 * 60 * 60 * 1000; // 12 horas
-      
-      if (cached && (Date.now() - cached.timestamp < CACHE_EXPIRATION_MS)) {
-        console.log(`[Playlist] Cache (IndexedDB) válido encontrado: ${cached.data.length} categorias de ${new Date(cached.timestamp).toLocaleTimeString()}.`);
+      if (!authToken) {
+        throw new Error('Sessao ausente ou expirada.');
+      }
+
+      setPlaylistStatus('loading_user_info');
+      const meResponse = await fetch('/api/auth/me', {
+        headers: { 'x-auth-token': authToken }
+      });
+
+      if (!meResponse.ok) {
+        throw new Error(`Servidor respondeu com status ${meResponse.status}`);
+      }
+
+      const userData = await meResponse.json();
+      hasValidatedUser = true;
+      setAdultAccessSettings(userData.adultAccess);
+
+      if (!userData.playlistUrl) {
+        throw new Error('Nenhuma URL de playlist configurada.');
+      }
+
+      playlistUrl = userData.playlistUrl;
+      cacheScope = buildPlaylistCacheScope(userData.id || 'anonymous', playlistUrl);
+
+      const cached = await getPlaylistCache(cacheScope);
+      const CACHE_EXPIRATION_MS = 12 * 60 * 60 * 1000;
+
+      if (cached && Date.now() - cached.timestamp < CACHE_EXPIRATION_MS) {
+        console.log(
+          `[Playlist] Cache (IndexedDB) valido encontrado: ${cached.data.length} categorias de ${new Date(cached.timestamp).toLocaleTimeString()}.`,
+        );
         setAllCategories(cached.data);
         setIsUsingMock(false);
         setPlaylistStatus('success');
+        setPlaylistSource(describePlaylistSource(playlistUrl));
         setLoading(false);
-        return; // Early Exit: Cache is fresh!
+        return;
       }
 
-      // 2. Refresh user info to get the latest playlist URL
-      if (authToken) {
-        setPlaylistStatus('loading_user_info');
-        const meResponse = await fetch('/api/auth/me', {
-          headers: { 'x-auth-token': authToken }
-        });
-        if (meResponse.ok) {
-          const userData = await meResponse.json();
-          setAdultAccessSettings(userData.adultAccess);
-          if (userData.playlistUrl) {
-            playlistUrl = userData.playlistUrl;
-            localStorage.setItem('xandeflix_playlist_url', playlistUrl);
-            console.log(`[Playlist] Playlist URL do usuário: ${playlistUrl}`);
-          } else {
-            console.warn('[Playlist] Usuário autenticado mas sem playlist URL configurada.');
-          }
-        } else {
-          console.error('[Playlist] Falha ao buscar dados do usuário:', meResponse.status);
-          setPlaylistError({
-            status: 'error_auth',
-            message: 'Não foi possível verificar sua conta.',
-            details: `Servidor respondeu com status ${meResponse.status}`,
-          });
-        }
-      }
-
-      // 3. Fetch the actual M3U content through proxy if not cached or expired
       setPlaylistStatus('loading_playlist');
-      setPlaylistSource(playlistUrl || 'URL padrão');
+      setPlaylistSource(describePlaylistSource(playlistUrl));
 
-      if (!playlistUrl) {
-         throw new Error('Nenhuma URL de playlist configurada.');
-      }
-
-      const fetchUrl = `/api/proxy-playlist?url=${encodeURIComponent(playlistUrl)}`;
-      console.log(`[Playlist] Buscando conteúdo através do proxy: ${fetchUrl}`);
+      const fetchUrl = '/api/proxy-playlist';
+      console.log(
+        `[Playlist] Buscando conteudo atraves do proxy para ${describePlaylistSource(playlistUrl)}...`,
+      );
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-      const response = await fetch(fetchUrl, {
-        signal: controller.signal,
-        headers: {
-          'x-auth-token': authToken
+      let m3uRawText = '';
+      try {
+        const response = await fetch(fetchUrl, {
+          signal: controller.signal,
+          headers: {
+            'x-auth-token': authToken
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Erro ao baixar lista: HTTP ${response.status}`);
         }
-      });
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`Erro ao baixar lista: HTTP ${response.status}`);
+
+        m3uRawText = await response.text();
+      } finally {
+        clearTimeout(timeoutId);
       }
-      
-      const m3uRawText = await response.text();
-      
-      // 4. Parse content client-side using a BACKGROUND WORKER (to keep UI thread at 60fps)
-      console.log(`[Playlist] Conteúdo baixado. Delegando processamento para o Web Worker...`);
-      
+
+      console.log('[Playlist] Conteudo baixado. Delegando processamento para o Web Worker...');
+
       const parsedCategories = await new Promise<any[]>((resolve, reject) => {
-        const worker = new Worker(new URL('../workers/m3u.worker.ts', import.meta.url), { type: 'module' });
-        
+        const worker = new Worker(new URL('../workers/m3u.worker.ts', import.meta.url), {
+          type: 'module'
+        });
+
         worker.onmessage = (e) => {
           if (e.data.success) {
             resolve(e.data.data);
           } else {
-            console.error(`[Playlist] Falha no processamento pelo worker:`, e.data.error);
+            console.error('[Playlist] Falha no processamento pelo worker:', e.data.error);
             reject(new Error(e.data.error || 'Erro no worker de parsing'));
           }
           worker.terminate();
         };
 
         worker.onerror = (err) => {
-          console.error(`[Playlist] Erro crítico no worker:`, err);
-          reject(new Error('Falha catastrófica no worker de processamento'));
+          console.error('[Playlist] Erro critico no worker:', err);
+          reject(new Error('Falha catastrofica no worker de processamento'));
           worker.terminate();
         };
 
         worker.postMessage({ m3uText: m3uRawText });
       });
-      
+
       if (parsedCategories.length > 0) {
-        // Save to Persistent Cache BEFORE updating the UI State
-        await savePlaylistCache(parsedCategories);
-        
+        await savePlaylistCache(parsedCategories, cacheScope);
+
         setAllCategories(parsedCategories);
         setIsUsingMock(false);
         setPlaylistStatus('success');
-        console.log(`[Playlist] ✅ Processado em Background: ${parsedCategories.length} categorias (Cache atualizado).`);
+        console.log(
+          `[Playlist] Processado em background: ${parsedCategories.length} categorias (cache atualizado).`,
+        );
       } else if (!hasData) {
-        console.warn('[Playlist] Resposta vazia ou inválida. Usando dados MOCK.');
+        console.warn('[Playlist] Resposta vazia ou invalida. Usando dados MOCK.');
         setAllCategories(MOCK_CATEGORIES);
         setIsUsingMock(true);
         setPlaylistStatus('mock_fallback');
         setPlaylistError({
           status: 'mock_fallback',
           message: 'A lista de canais retornou vazia.',
-          details: 'O servidor processou a requisição, mas a lista M3U não contém conteúdo válido.',
+          details: 'O servidor processou a requisicao, mas a lista M3U nao contem conteudo valido.',
           playlistUrl,
         });
       }
     } catch (error: any) {
       console.error('[Playlist] Erro ao buscar playlist:', error);
-      
-      const errorMessage = error.name === 'AbortError'
-        ? 'A requisição excedeu o tempo limite (60s).'
-        : (error.message || 'Erro desconhecido');
+
+      const errorMessage =
+        error.name === 'AbortError'
+          ? 'A requisicao excedeu o tempo limite (60s).'
+          : error.message || 'Erro desconhecido';
+      const errorStatus: PlaylistStatus = hasValidatedUser ? 'error_playlist' : 'error_auth';
 
       setPlaylistError({
-        status: 'error_playlist',
-        message: `Falha ao carregar a lista IPTV.`,
+        status: errorStatus,
+        message: hasValidatedUser
+          ? 'Falha ao carregar a lista IPTV.'
+          : 'Nao foi possivel verificar sua conta.',
         details: errorMessage,
         playlistUrl,
       });
 
-      if (!hasData) {
+      if (!hasData && hasValidatedUser) {
         setAllCategories(MOCK_CATEGORIES);
         setIsUsingMock(true);
         setPlaylistStatus('mock_fallback');
+      } else {
+        setPlaylistStatus(errorStatus);
       }
     } finally {
       setLoading(false);

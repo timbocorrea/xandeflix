@@ -21,7 +21,23 @@ interface SessionPayload {
 
 export class AuthSessionService {
   private static ttlMs = Number(process.env.SESSION_TTL_MS || DEFAULT_TTL_MS);
-  private static secret = process.env.SESSION_SECRET || process.env.ADMIN_SECRET_KEY || 'xandeflix-local-session-secret';
+  private static isProductionRuntime =
+    process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+
+  private static resolveSecret(): string {
+    const secret = process.env.SESSION_SECRET || process.env.ADMIN_SECRET_KEY;
+    if (secret) {
+      return secret;
+    }
+
+    if (this.isProductionRuntime) {
+      throw new Error('SESSION_SECRET is required in production.');
+    }
+
+    return 'xandeflix-local-session-secret';
+  }
+
+  private static secret = this.resolveSecret();
 
   private static toBase64Url(value: string): string {
     return Buffer.from(value, 'utf-8').toString('base64url');

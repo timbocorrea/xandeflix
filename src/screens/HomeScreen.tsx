@@ -85,22 +85,20 @@ const CategoryRowSkeleton = ({ layout }: { layout: any; key?: any }) => {
 
 const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   // Global Store State
-  const { 
-    allCategories, 
-    activeFilter, 
-    searchQuery,
-    selectedMedia, 
-    setSelectedMedia, 
-    isSettingsVisible, 
-    setIsSettingsVisible, 
-    hiddenCategoryIds, 
-    setHiddenCategoryIds,
-    isUsingMock 
-  } = useStore();
+  const allCategories = useStore((state) => state.allCategories);
+  const activeFilter = useStore((state) => state.activeFilter);
+  const searchQuery = useStore((state) => state.searchQuery);
+  const selectedMedia = useStore((state) => state.selectedMedia);
+  const setSelectedMedia = useStore((state) => state.setSelectedMedia);
+  const isSettingsVisible = useStore((state) => state.isSettingsVisible);
+  const setIsSettingsVisible = useStore((state) => state.setIsSettingsVisible);
+  const hiddenCategoryIds = useStore((state) => state.hiddenCategoryIds);
+  const setHiddenCategoryIds = useStore((state) => state.setHiddenCategoryIds);
+  const isUsingMock = useStore((state) => state.isUsingMock);
   const setActiveFilter = useStore((state) => state.setActiveFilter);
   const setSearchQuery = useStore((state) => state.setSearchQuery);
   const setIsAdminMode = useStore((state) => state.setIsAdminMode);
-  const adultAccess = useStore((state) => state.adultAccess);
+  const adultAccessEnabled = useStore((state) => state.adultAccess.enabled);
   const isAdultUnlocked = useStore((state) => state.isAdultUnlocked);
 
   // Custom Hooks for Data & Filtering
@@ -161,7 +159,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     return () => clearTimeout(focusTimer);
   }, [activeFilter]);
 
-  const isAdultLocked = !adultAccess.enabled || !isAdultUnlocked;
+  const isAdultLocked = !adultAccessEnabled || !isAdultUnlocked;
 
   const liveChannelCategories = useMemo(
     () =>

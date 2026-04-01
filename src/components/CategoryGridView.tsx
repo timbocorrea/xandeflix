@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableHighlight, Image, TextInput } from 'react-native';
-import { X, Search, LayoutGrid, Star } from 'lucide-react';
+import { X, Search, LayoutGrid, Star, Heart } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Category, Media } from '../types';
 import { useTMDB } from '../hooks/useTMDB';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
+import { useStore } from '../store/useStore';
 
 interface GridItemProps {
   item: Media;
@@ -17,6 +18,10 @@ interface GridItemProps {
 const GridItem = React.memo(({ item, onPress, index, cardWidth, isCompact }: GridItemProps) => {
   const { data: tmdbData, loading: tmdbLoading } = useTMDB(item.title, item.type);
   const [imgError, setImgError] = useState(false);
+  const favorites = useStore((state) => state.favorites);
+  const isFavorite =
+    favorites.includes(item.videoUrl || `media:${item.id}`) ||
+    favorites.includes(item.id);
 
   // Strategy "Efeito Pulo": Hide unlisted items without covers (excluding live channels)
   const isLiveChannel = item.type === 'live';
@@ -52,6 +57,11 @@ const GridItem = React.memo(({ item, onPress, index, cardWidth, isCompact }: Gri
             resizeMode={displayMode}
             onError={() => setImgError(true)}
           />
+          {isFavorite && (
+            <View style={styles.favoriteBadge}>
+              <Heart size={13} color="#ffffff" fill="#E50914" />
+            </View>
+          )}
           <View style={styles.overlay}>
             <Text style={[styles.cardTitle, isCompact && styles.cardTitleCompact]} numberOfLines={2}>
               {item.title}
@@ -302,6 +312,20 @@ const styles = StyleSheet.create({
   thumbnail: {
     width: '100%',
     height: '100%',
+  },
+  favoriteBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
   },
   overlay: {
     position: 'absolute',

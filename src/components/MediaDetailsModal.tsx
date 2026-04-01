@@ -41,7 +41,57 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
   const favorites = useStore(state => state.favorites);
   const toggleFavorite = useStore(state => state.toggleFavorite);
   const { data: tmdbData, loading: tmdbLoading } = useTMDB(media.title, media.type);
-  const isFavorite = favorites.includes(media.videoUrl);
+  const favoriteKey = media.videoUrl || `media:${media.id}`;
+  const isFavorite = favorites.includes(favoriteKey) || favorites.includes(media.id);
+
+  const primaryActionMedia = useMemo(() => {
+    if (!media.seasons || media.seasons.length === 0) {
+      return media.videoUrl ? media : null;
+    }
+
+    const resumableEpisode = media.seasons
+      .flatMap((season) =>
+        season.episodes.map((episode) => ({
+          episode,
+          seasonNumber: season.seasonNumber,
+          progress: watchHistory[episode.videoUrl] || 0,
+        })),
+      )
+      .find((entry) => entry.progress > 5);
+
+    if (resumableEpisode) {
+      return {
+        ...media,
+        videoUrl: resumableEpisode.episode.videoUrl,
+        title: `${media.title} - ${resumableEpisode.episode.title}`,
+        currentEpisode: resumableEpisode.episode,
+        currentSeasonNumber: resumableEpisode.seasonNumber,
+      };
+    }
+
+    const firstSeason = media.seasons[0];
+    const firstEpisode = firstSeason?.episodes?.[0];
+
+    if (!firstEpisode) {
+      return null;
+    }
+
+    return {
+      ...media,
+      videoUrl: firstEpisode.videoUrl,
+      title: `${media.title} - ${firstEpisode.title}`,
+      currentEpisode: firstEpisode,
+      currentSeasonNumber: firstSeason.seasonNumber,
+    };
+  }, [media, watchHistory]);
+
+  const shouldResumePlayback = useMemo(() => {
+    if (!primaryActionMedia?.videoUrl) {
+      return false;
+    }
+
+    return (watchHistory[primaryActionMedia.videoUrl] || 0) > 5;
+  }, [primaryActionMedia, watchHistory]);
 
   const relatedCategory = useMemo(() => {
     // Busca a categoria que contém o conteúdo atual
@@ -215,28 +265,31 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
 
               {/* Actions */}
               <View style={[styles.actionRow, layout.isCompact && styles.actionRowCompact]}>
-                {(!media.seasons || media.seasons.length === 0) && (
+                {primaryActionMedia && (
                   <TouchableHighlight
-                    onPress={() => onPlay(media)}
+                    onPress={() => onPlay(primaryActionMedia)}
                     style={[styles.playBtn, layout.isCompact && styles.playBtnCompact]}
                     underlayColor="#B80710"
                   >
                     <View style={styles.playBtnInner}>
                       <View style={styles.iconWrap}><Play size={22} color="white" fill="white" /></View>
                       <Text style={[styles.playBtnText, layout.isCompact && styles.playBtnTextCompact]}>
-                        Assistir Agora
+                        {shouldResumePlayback ? 'Continuar Assistindo' : 'Assistir Agora'}
                       </Text>
                     </View>
                   </TouchableHighlight>
                 )}
 
                 <TouchableHighlight
-                  onPress={() => toggleFavorite(media.videoUrl)}
-                  style={styles.circleBtn}
+                  onPress={() => toggleFavorite(favoriteKey)}
+                  style={[styles.favoriteBtn, isFavorite && styles.favoriteBtnActive]}
                   underlayColor="rgba(255,255,255,0.15)"
                 >
-                  <View style={styles.iconWrap}>
+                  <View style={styles.favoriteBtnInner}>
                     <Heart size={22} color={isFavorite ? '#E50914' : 'white'} fill={isFavorite ? '#E50914' : 'transparent'} />
+                    <Text style={[styles.favoriteBtnText, isFavorite && styles.favoriteBtnTextActive]}>
+                      {isFavorite ? 'Favoritado' : 'Favoritar'}
+                    </Text>
                   </View>
                 </TouchableHighlight>
 
@@ -534,6 +587,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+  },
+  favoriteBtn: {
+    minHeight: 50,
+    paddingHorizontal: 18,
+    borderRadius: 25,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  favoriteBtnActive: {
+    borderColor: 'rgba(229,9,20,0.45)',
+    backgroundColor: 'rgba(229,9,20,0.12)',
+  },
+  favoriteBtnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  } as any,
+  favoriteBtnText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '700',
+    fontFamily: 'Outfit',
+  },
+  favoriteBtnTextActive: {
+    color: '#FCA5A5',
   },
   iconWrap: {
     justifyContent: 'center',

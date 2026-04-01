@@ -78,6 +78,36 @@ function isAllowedPlaylistUrl(targetUrl: string): boolean {
   }
 }
 
+function isRemoteHttpUrl(targetUrl: string): boolean {
+  try {
+    const parsed = new URL(targetUrl);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function getUrlHostLabel(targetUrl: string): string {
+  try {
+    return new URL(targetUrl).host.toLowerCase();
+  } catch {
+    return 'invalid-url';
+  }
+}
+
+async function isKnownManagedPlaylistUrl(targetUrl: string): Promise<boolean> {
+  const normalizedTarget = targetUrl.trim();
+  if (!normalizedTarget) return false;
+
+  try {
+    const users = await AdminService.listUsers();
+    return users.some((user) => (user.playlistUrl || '').trim() === normalizedTarget);
+  } catch (error) {
+    console.warn('[SECURITY] Failed to verify managed playlist URL:', error);
+    return false;
+  }
+}
+
 function serializeUser(user: {
   id: string;
   name: string;
@@ -171,12 +201,52 @@ app.get('/api/proxy-playlist', async (req, res) => {
       return res.status(401).json({ error: 'Sessão inválida ou não autorizado' });
     }
 
-    const playlistUrl = req.query.url as string;
+    const requestedUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    let playlistUrl = requestedUrl;
+    if (session.role === 'user') {
+      const { user } = await getAuthenticatedUser(req);
+      if (!user) {
+        return res.status(401).json({ error: 'Sessao invalida ou nao autorizado' });
+      }
+
+      if (requestedUrl && requestedUrl !== user.playlistUrl) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Usuarios so podem acessar a propria playlist.',
+        });
+      }
+
+      playlistUrl = user.playlistUrl;
+    }
+
     if (!playlistUrl) {
       return res.status(400).json({ error: 'URL da playlist é obrigatória' });
     }
 
-    console.log(`[PROXY] Buscando conteúdo para: ${playlistUrl.substring(0, 50)}... [Role: ${session.role}]`);
+    if (!isRemoteHttpUrl(playlistUrl)) {
+      return res.status(400).json({ error: 'URL da playlist invalida' });
+    }
+
+    if (session.role === 'admin') {
+      const isKnownPlaylist = await isKnownManagedPlaylistUrl(playlistUrl);
+      if (!isAllowedPlaylistUrl(playlistUrl) && !isKnownPlaylist) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'A URL solicitada nao esta autorizada para uso no proxy.',
+        });
+      }
+
+      if (isKnownPlaylist) {
+        registerAuthorizedDomainFromUrl(playlistUrl);
+      }
+    } else if (!isAllowedPlaylistUrl(playlistUrl)) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'A URL da playlist do usuario nao esta autorizada.',
+      });
+    }
+
+    console.log(`[PROXY] Buscando conteudo para host ${getUrlHostLabel(playlistUrl)} [Role: ${session.role}]`);
 
     const response = await axios.get(playlistUrl, {
       timeout: 30000,
@@ -457,6 +527,9 @@ app.post('/api/admin/user/add', adminAuthMiddleware, async (req, res) => {
   try {
     const { name, playlistUrl, username, password } = req.body;
     const user = await AdminService.addUser(name, playlistUrl, username, password);
+    if (user.playlistUrl) {
+      registerAuthorizedDomainFromUrl(user.playlistUrl);
+    }
     res.status(201).json(AdminService.toPublicUser(user));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -478,6 +551,9 @@ app.post('/api/admin/user/update', adminAuthMiddleware, async (req, res) => {
   try {
     const { userId, ...data } = req.body;
     const success = await AdminService.updateUser(userId, data);
+    if (success && data.playlistUrl) {
+      registerAuthorizedDomainFromUrl(data.playlistUrl);
+    }
     if (success) res.sendStatus(200);
     else res.status(404).send('User not found');
   } catch (e: any) {

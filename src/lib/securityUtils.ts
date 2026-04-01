@@ -11,17 +11,17 @@
  */
 export const maskUrlCredentials = (urlString: string): string => {
   if (!urlString || typeof urlString !== 'string') return urlString;
-  if (!urlString.includes('password=') && !urlString.includes('pass=') && !urlString.includes('pwd=')) {
+  if (!/password=|pass=|pwd=|token=|key=/i.test(urlString)) {
     return urlString;
   }
 
   try {
     const url = new URL(urlString);
-    const sensitiveParams = ['password', 'pass', 'pwd', 'token', 'key'];
+    const sensitiveParamPattern = /^(password|pass|pwd|token|key)$/i;
 
     let hasChanges = false;
-    sensitiveParams.forEach(param => {
-      if (url.searchParams.has(param)) {
+    Array.from(url.searchParams.keys()).forEach(param => {
+      if (sensitiveParamPattern.test(param)) {
         url.searchParams.set(param, '******');
         hasChanges = true;
       }
@@ -30,7 +30,7 @@ export const maskUrlCredentials = (urlString: string): string => {
     return hasChanges ? url.toString() : urlString;
   } catch (e) {
     // Se a URL for inválida (ex: caminhos parciais), tentamos um regex simples de fallback
-    return urlString.replace(/(?:password|pass|pwd)=([^&]+)/gi, (match, p1, offset, string) => {
+    return urlString.replace(/(?:password|pass|pwd|token|key)=([^&]+)/gi, (match, p1, offset, string) => {
        const key = match.split('=')[0];
        return `${key}=******`;
     });

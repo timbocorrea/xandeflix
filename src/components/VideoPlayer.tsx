@@ -164,7 +164,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const [reloadNonce, setReloadNonce] = React.useState(0);
 
   // Sidebar State
-  const { allCategories } = useStore();
+  const allCategories = useStore((state) => state.allCategories);
   const sidebarCategories = React.useMemo(
     () =>
       (channelBrowserCategories && channelBrowserCategories.length > 0
@@ -198,7 +198,6 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const authToken = localStorage.getItem('xandeflix_auth_token') || '';
 
   // Progress persistence hooks
-  const watchHistory = useStore((state) => state.watchHistory);
   const updateWatchHistory = useStore((state) => state.updateWatchHistory);
 
   // States for player features
@@ -659,6 +658,29 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   useEffect(() => {
     if (!activeVideoElement) return;
     const v = activeVideoElement;
+    const attemptInitialSeek = () => {
+        if (isLiveStream || initialSeekDone.current) {
+            return;
+        }
+
+        const savedTime = useStore.getState().watchHistory[url];
+        const mediaDuration = v.duration;
+
+        if (!savedTime) {
+            initialSeekDone.current = true;
+            return;
+        }
+
+        if (!Number.isFinite(mediaDuration) || mediaDuration <= 0 || mediaDuration === Infinity) {
+            return;
+        }
+
+        if (savedTime > 5 && savedTime < mediaDuration - 5) {
+            v.currentTime = savedTime;
+        }
+
+        initialSeekDone.current = true;
+    };
     const upPlay = () => {
         const playing = !v.paused && !v.ended;
         setIsPlaying(playing);
@@ -709,8 +731,10 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     v.addEventListener('leavepictureinpicture', upPiP);
     v.addEventListener('webkitpresentationmodechanged', upPiP);
     v.addEventListener('loadedmetadata', upPiP);
+    v.addEventListener('loadedmetadata', attemptInitialSeek);
+    v.addEventListener('canplay', attemptInitialSeek);
 
-    upPlay(); upProg(); upVol(); upPiP();
+    upPlay(); upProg(); upVol(); upPiP(); attemptInitialSeek();
 
     return () => {
         v.removeEventListener('play', upPlay);
@@ -727,8 +751,10 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
         v.removeEventListener('leavepictureinpicture', upPiP);
         v.removeEventListener('webkitpresentationmodechanged', upPiP);
         v.removeEventListener('loadedmetadata', upPiP);
+        v.removeEventListener('loadedmetadata', attemptInitialSeek);
+        v.removeEventListener('canplay', attemptInitialSeek);
     };
-  }, [activeVideoElement, finalizeTelemetryPhases, isLiveStream, markPlaybackProgress, markTelemetryBuffering, markTelemetryPlaying, restartPlayback, syncPictureInPictureState]);
+  }, [activeVideoElement, finalizeTelemetryPhases, isLiveStream, markPlaybackProgress, markTelemetryBuffering, markTelemetryPlaying, restartPlayback, syncPictureInPictureState, url]);
 
   useEffect(() => {
     onPictureInPictureChange?.(isInPictureInPicture);
@@ -762,15 +788,6 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       const d = activeVideoElement.duration;
       if (!d || d === Infinity) return;
 
-      // Initial seek from history (VOD only)
-      if (!isLiveStream && !initialSeekDone.current && t < 1) {
-        const savedTime = watchHistory[url];
-        if (savedTime && savedTime > 5 && savedTime < d - 5) {
-          activeVideoElement.currentTime = savedTime;
-        }
-        initialSeekDone.current = true;
-      }
-
       // Throttle saving: only save if we progressed at least 5 seconds
       if (!isLiveStream && t > 0 && Math.abs(t - lastSavedTime.current) > 5) {
         lastSavedTime.current = t;
@@ -789,7 +806,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [activeVideoElement, url, watchHistory, updateWatchHistory, onPlayNextEpisode, isLiveStream]);
+  }, [activeVideoElement, url, updateWatchHistory, onPlayNextEpisode, isLiveStream]);
 
   useEffect(() => {
     if (!activeVideoElement || !isLiveStream || error) return;
@@ -932,6 +949,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     playerRef.current = player;
     player.on(mpegts.Events.ERROR, () => {
       if (fallbackNextQuality()) return;
+      if (fallbackNextStrategy()) return;
       if (isLiveStream) {
         restartPlayback('error');
         return;

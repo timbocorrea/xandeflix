@@ -15,16 +15,36 @@ export interface PlaylistCacheData {
 
 const CACHE_KEY = 'xandeflix_active_playlist';
 
+function hashCacheScope(scope: string): string {
+  let hash = 2166136261;
+
+  for (let index = 0; index < scope.length; index += 1) {
+    hash ^= scope.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(36);
+}
+
+function getScopedCacheKey(scope?: string): string {
+  const normalizedScope = (scope || '').trim();
+  return normalizedScope ? `${CACHE_KEY}:${hashCacheScope(normalizedScope)}` : CACHE_KEY;
+}
+
+export function buildPlaylistCacheScope(userId: string, playlistUrl: string): string {
+  return `${userId.trim().toLowerCase()}::${playlistUrl.trim()}`;
+}
+
 /**
  * Salva as categorias processadas no cache persistente
  */
-export async function savePlaylistCache(data: Category[]): Promise<void> {
+export async function savePlaylistCache(data: Category[], scope?: string): Promise<void> {
   try {
     const cacheObject: PlaylistCacheData = {
       data,
       timestamp: Date.now()
     };
-    await localforage.setItem(CACHE_KEY, cacheObject);
+    await localforage.setItem(getScopedCacheKey(scope), cacheObject);
     console.log('[Cache] Playlist salva no IndexedDB com sucesso.');
   } catch (err) {
     console.error('[Cache] Falha ao salvar no IndexedDB:', err);
@@ -34,9 +54,9 @@ export async function savePlaylistCache(data: Category[]): Promise<void> {
 /**
  * Recupera os dados do cache, se existirem
  */
-export async function getPlaylistCache(): Promise<PlaylistCacheData | null> {
+export async function getPlaylistCache(scope?: string): Promise<PlaylistCacheData | null> {
   try {
-    return await localforage.getItem<PlaylistCacheData>(CACHE_KEY);
+    return await localforage.getItem<PlaylistCacheData>(getScopedCacheKey(scope));
   } catch (err) {
     console.error('[Cache] Falha ao ler do IndexedDB:', err);
     return null;
@@ -46,9 +66,14 @@ export async function getPlaylistCache(): Promise<PlaylistCacheData | null> {
 /**
  * Remove o cache atual, forçando uma nova sincronização com o provedor
  */
-export async function clearPlaylistCache(): Promise<void> {
+export async function clearPlaylistCache(scope?: string): Promise<void> {
   try {
-    await localforage.removeItem(CACHE_KEY);
+    if (scope) {
+      await localforage.removeItem(getScopedCacheKey(scope));
+      await localforage.removeItem(CACHE_KEY);
+    } else {
+      await localforage.clear();
+    }
     console.log('[Cache] Cache de playlist limpo.');
   } catch (err) {
     console.error('[Cache] Falha ao limpar IndexedDB:', err);

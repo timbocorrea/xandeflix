@@ -1,11 +1,17 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { Category, Media } from '../types';
+import { Category, EPGProgram, Media } from '../types';
 import { supabase } from '../lib/supabase';
 
 export type AdultAccessState = {
   enabled: boolean;
   totpEnabled: boolean;
+};
+
+type PlaybackProgressEntry = {
+  currentTime: number;
+  duration: number;
+  timestamp: number;
 };
 
 interface XandeflixState {
@@ -35,6 +41,11 @@ interface XandeflixState {
   watchHistory: Record<string, number>; // url -> timeInSeconds
   updateWatchHistory: (url: string, timeInSeconds: number) => void;
 
+  epgData: Record<string, EPGProgram[]> | null;
+  setEpgData: (epgData: Record<string, EPGProgram[]> | null) => void;
+
+  playbackProgress: Record<string, PlaybackProgressEntry>;
+
   isAdminMode: boolean;
   setIsAdminMode: (mode: boolean) => void;
   managedUsers: any[];
@@ -45,6 +56,8 @@ interface XandeflixState {
   isAdultUnlocked: boolean;
   unlockAdultContent: () => void;
   lockAdultContent: () => void;
+  hydrateProfileState: (userId?: string) => void;
+  clearSessionState: () => void;
 }
 
 export const useStore = create<XandeflixState>()(
@@ -59,6 +72,8 @@ export const useStore = create<XandeflixState>()(
       hiddenCategoryIds: [],
       favorites: [],
       watchHistory: {},
+      epgData: null,
+      playbackProgress: {},
       isAdminMode: false,
       managedUsers: [],
       adultAccess: { enabled: false, totpEnabled: false },
@@ -85,8 +100,18 @@ export const useStore = create<XandeflixState>()(
           watchHistory: {
             ...state.watchHistory,
             [url]: time
-          }
+          },
+          playbackProgress: {
+            ...state.playbackProgress,
+            [url]: {
+              currentTime: time,
+              duration: state.playbackProgress[url]?.duration || 0,
+              timestamp: Date.now(),
+            },
+          },
         })),
+
+      setEpgData: (epgData) => set({ epgData }),
 
       setIsAdminMode: (mode) => set({ isAdminMode: mode }),
       setManagedUsers: (users) => set({ managedUsers: users }),
@@ -103,6 +128,30 @@ export const useStore = create<XandeflixState>()(
       },
       unlockAdultContent: () => set({ isAdultUnlocked: true }),
       lockAdultContent: () => set({ isAdultUnlocked: false }),
+      hydrateProfileState: () =>
+        set({
+          allCategories: [],
+          activeFilter: 'home',
+          searchQuery: '',
+          selectedMedia: null,
+          isSettingsVisible: false,
+          isUsingMock: false,
+          epgData: null,
+        }),
+      clearSessionState: () =>
+        set({
+          allCategories: [],
+          activeFilter: 'home',
+          searchQuery: '',
+          selectedMedia: null,
+          isSettingsVisible: false,
+          isUsingMock: false,
+          managedUsers: [],
+          adultAccess: { enabled: false, totpEnabled: false },
+          isAdultUnlocked: false,
+          epgData: null,
+          playbackProgress: {},
+        }),
     }),
     {
       name: 'xandeflix-app-storage',
