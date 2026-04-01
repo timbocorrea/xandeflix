@@ -198,10 +198,12 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const authToken = localStorage.getItem('xandeflix_auth_token') || '';
 
   // Progress persistence hooks
-  const setPlaybackProgress = useStore((state) => state.setPlaybackProgress);
-  const syncProgressToSupabase = useStore((state) => state.syncProgressToSupabase);
-  const userId = localStorage.getItem('xandeflix_user_id');
-  const progressId = media?.currentEpisode?.id || media?.id || encodeURIComponent(streamUrl);
+  const watchHistory = useStore((state) => state.watchHistory);
+  const updateWatchHistory = useStore((state) => state.updateWatchHistory);
+
+  // States for player features
+  const [showCountdown, setShowCountdown] = React.useState(false);
+  const [countdown, setCountdown] = React.useState(10);
   const initialSeekDone = useRef(false);
   const lastSavedTime = useRef(0);
   const lastSyncedTime = useRef(0);
@@ -210,6 +212,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const hasPlaybackStarted = useRef(false);
   const autoRecoveryCount = useRef(0);
   const lastAutoRecoveryAt = useRef(0);
+  
   const triedStrategiesRef = useRef<Set<PlaybackStrategy>>(new Set());
   const telemetrySessionRef = useRef<LiveTelemetrySession | null>(null);
   const telemetryKey = React.useMemo(
@@ -220,76 +223,6 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     () => buildStrategyCandidates(streamUrl, isLiveStream),
     [isLiveStream, streamUrl],
   );
-
-  // Countdown for next episode
-  const [showCountdown, setShowCountdown] = React.useState(false);
-  const [countdown, setCountdown] = React.useState(10);
-
-  // ── Helpers ──
-  const formatTime = (seconds: number) => {
-    if (isNaN(seconds) || seconds === Infinity) return '--:--';
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-    if (hrs > 0) return `${hrs}:${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  };
-
-  const togglePlay = React.useCallback(() => {
-    if (!activeVideoElement) return;
-    if (activeVideoElement.paused) activeVideoElement.play().catch(() => {});
-    else activeVideoElement.pause();
-  }, [activeVideoElement]);
-
-  const skipTime = React.useCallback((amount: number) => {
-    if (!activeVideoElement) return;
-    activeVideoElement.currentTime = Math.max(0, Math.min(activeVideoElement.duration || Infinity, activeVideoElement.currentTime + amount));
-  }, [activeVideoElement]);
-
-  const handleSeek = (time: number) => {
-    if (!activeVideoElement) return;
-    activeVideoElement.currentTime = time;
-  };
-
-  const handleVolumeChange = (v: number) => {
-    if (!activeVideoElement) return;
-    activeVideoElement.volume = v;
-    activeVideoElement.muted = v === 0;
-  };
-
-  const toggleMute = () => {
-    if (!activeVideoElement) return;
-    activeVideoElement.muted = !activeVideoElement.muted;
-  };
-
-  const goToAdjacentChannel = (dir: 1 | -1) => {
-    const cat = sidebarCategories.find(c => c.items.some(i => i.id === internalMedia?.id));
-    if (!cat) return;
-    const idx = cat.items.findIndex(i => i.id === internalMedia?.id);
-    const nIdx = (idx + dir + cat.items.length) % cat.items.length;
-    const next = cat.items[nIdx];
-    flushTelemetrySession('channel_switch');
-    setInternalUrl(next.videoUrl);
-    setInternalMedia(next);
-    setLoading(true);
-  };
-
-  const runDiagnostic = async () => {
-     setDiagnosing(true);
-     try {
-       const res = await fetch(`/api/diagnostic?url=${encodeURIComponent(streamUrl)}`, { headers: authToken ? { 'x-auth-token': authToken } : {} });
-       setDiagnostic(await res.json());
-     } catch { setDiagnostic({ success: false, message: 'Erro no servidor de diagnóstico.' }); }
-     finally { setDiagnosing(false); }
-  };
-
-  const toggleFullScreen = () => {
-    const el = containerRef.current?.parentElement;
-    if (!el) return;
-    const doc = document as any;
-    if (doc.fullscreenElement) doc.exitFullscreen?.();
-    else el.requestFullscreen?.();
-  };
 
   const createTelemetrySession = React.useCallback((): LiveTelemetrySession | null => {
     if (!isLiveStream || !telemetryKey) return null;
@@ -513,7 +446,154 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     setReloadNonce((prev) => prev + 1);
   }, [finalizeTelemetryPhases, flushTelemetrySession, incrementTelemetryCounter, isLiveStream, resetLiveRecoveryWatchdog, resetTelemetrySession]);
 
-  // ── Effects ──
+  // Detect PiP Support
+  const syncPictureInPictureState = React.useCallback((video: HTMLVideoElement | null) => {
+    if (typeof document === 'undefined' || !video) {
+        setIsPictureInPictureSupported(false);
+        setIsInPictureInPicture(false);
+        return;
+    }
+    const pipDoc = document as any;
+    const pipVid = video as any;
+    const supportsStandard = !!pipDoc.pictureInPictureEnabled && typeof pipVid.requestPictureInPicture === 'function' && !pipVid.disablePictureInPicture;
+    const supportsWebkit = typeof pipVid.webkitSupportsPresentationMode === 'function' && pipVid.webkitSupportsPresentationMode('picture-in-picture');
+    setIsPictureInPictureSupported(supportsStandard || supportsWebkit);
+    setIsInPictureInPicture(pipDoc.pictureInPictureElement === video || pipVid.webkitPresentationMode === 'picture-in-picture');
+  }, []);
+
+  const enterPictureInPicture = React.useCallback(async (): Promise<boolean> => {
+    if (!activeVideoElement) return false;
+    try {
+        if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+        const v = activeVideoElement as any;
+        if (v.requestPictureInPicture) await v.requestPictureInPicture();
+        else if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('picture-in-picture');
+        syncPictureInPictureState(v);
+        return true;
+    } catch (err) {
+        setError('PiP não suportado.');
+        setTimeout(() => setError(null), 3000);
+        return false;
+    }
+  }, [activeVideoElement, syncPictureInPictureState]);
+
+  const togglePictureInPicture = React.useCallback(async () => {
+    if (!activeVideoElement) return;
+    const doc = document as any;
+    const v = activeVideoElement as any;
+    if (doc.pictureInPictureElement === activeVideoElement || v.webkitPresentationMode === 'picture-in-picture') {
+        if (doc.exitPictureInPicture) await doc.exitPictureInPicture();
+        else if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('inline');
+    } else {
+        await enterPictureInPicture();
+    }
+    syncPictureInPictureState(v);
+  }, [activeVideoElement, enterPictureInPicture, syncPictureInPictureState]);
+
+  // ── Helpers ──
+  const formatTime = (seconds: number) => {
+    if (isNaN(seconds) || seconds === Infinity) return '--:--';
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    if (hrs > 0) return `${hrs}:${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const togglePlay = React.useCallback(() => {
+    if (!activeVideoElement) return;
+    if (activeVideoElement.paused) activeVideoElement.play().catch(() => {});
+    else activeVideoElement.pause();
+  }, [activeVideoElement]);
+
+  const skipTime = React.useCallback((amount: number) => {
+    if (!activeVideoElement) return;
+    activeVideoElement.currentTime = Math.max(0, Math.min(activeVideoElement.duration || Infinity, activeVideoElement.currentTime + amount));
+  }, [activeVideoElement]);
+
+  const handleSeek = (time: number) => {
+    if (!activeVideoElement) return;
+    activeVideoElement.currentTime = time;
+  };
+
+  const handleVolumeChange = (v: number) => {
+    if (!activeVideoElement) return;
+    activeVideoElement.volume = v;
+    activeVideoElement.muted = v === 0;
+  };
+
+  const toggleMute = () => {
+    if (!activeVideoElement) return;
+    activeVideoElement.muted = !activeVideoElement.muted;
+  };
+
+  const goToAdjacentChannel = React.useCallback((dir: 1 | -1) => {
+    const cat = sidebarCategories.find(c => c.items.some(i => i.id === internalMedia?.id));
+    if (!cat) return;
+    const idx = cat.items.findIndex(i => i.id === internalMedia?.id);
+    const nIdx = (idx + dir + cat.items.length) % cat.items.length;
+    const next = cat.items[nIdx];
+    flushTelemetrySession('channel_switch');
+    setInternalUrl(next.videoUrl);
+    setInternalMedia(next);
+    setLoading(true);
+  }, [sidebarCategories, internalMedia?.id, flushTelemetrySession]);
+
+  const runDiagnostic = async () => {
+     setDiagnosing(true);
+     try {
+       const res = await fetch(`/api/diagnostic?url=${encodeURIComponent(streamUrl)}`, { headers: authToken ? { 'x-auth-token': authToken } : {} });
+       setDiagnostic(await res.json());
+     } catch { setDiagnostic({ success: false, message: 'Erro no servidor de diagnóstico.' }); }
+     finally { setDiagnosing(false); }
+  };
+
+  const toggleFullScreen = React.useCallback(() => {
+    const el = containerRef.current?.parentElement;
+    if (!el) return;
+    const doc = document as any;
+    if (doc.fullscreenElement) doc.exitFullscreen?.();
+    else el.requestFullscreen?.();
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    enterPictureInPicture,
+  }), [enterPictureInPicture]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        if (isSidebarOpen || showQualityMenu) {
+            if (e.key === 'Escape') { setIsSidebarOpen(false); setShowQualityMenu(false); }
+            return;
+        }
+
+        switch(e.key.toLowerCase()) {
+            case ' ':
+            case 'k': e.preventDefault(); togglePlay(); break;
+            case 'f': e.preventDefault(); toggleFullScreen(); break;
+            case 'm': e.preventDefault(); toggleMute(); break;
+            case 'l': e.preventDefault(); skipTime(10); break;
+            case 'j': e.preventDefault(); skipTime(-10); break;
+            case 'escape': 
+                e.preventDefault(); 
+                flushTelemetrySession('close'); 
+                onClose(); 
+                break;
+            case 'arrowright': 
+                e.preventDefault(); 
+                internalMedia?.type === 'live' ? goToAdjacentChannel(1) : skipTime(10); 
+                break;
+            case 'arrowleft': 
+                e.preventDefault(); 
+                internalMedia?.type === 'live' ? goToAdjacentChannel(-1) : skipTime(-10); 
+                break;
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [togglePlay, toggleMute, skipTime, goToAdjacentChannel, internalMedia?.type, isSidebarOpen, showQualityMenu, onClose, toggleFullScreen, flushTelemetrySession]);
 
   // Sync internal state when source props change
   useEffect(() => {
@@ -545,15 +625,15 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
 
   useEffect(() => {
     if (!isLiveStream || !telemetryKey) {
-      telemetrySessionRef.current = null;
-      return;
+        telemetrySessionRef.current = null;
+        return;
     }
 
     resetTelemetrySession();
 
     return () => {
-      flushTelemetrySession('unmount');
-      telemetrySessionRef.current = null;
+        flushTelemetrySession('unmount');
+        telemetrySessionRef.current = null;
     };
   }, [flushTelemetrySession, isLiveStream, resetTelemetrySession, telemetryKey]);
 
@@ -561,7 +641,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     if (!isLiveStream || !telemetryKey) return;
 
     const handlePageHide = () => {
-      flushTelemetrySession('close');
+        flushTelemetrySession('close');
     };
 
     window.addEventListener('pagehide', handlePageHide);
@@ -571,92 +651,48 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   // Handle sidebar categories
   useEffect(() => {
     if (sidebarCategories.length > 0 && !selectedCategoryId) {
-      setSelectedCategoryId(sidebarCategories[0].id);
+        setSelectedCategoryId(sidebarCategories[0].id);
     }
   }, [sidebarCategories, selectedCategoryId]);
-
-  // Detect PiP Support
-  const syncPictureInPictureState = React.useCallback((video: HTMLVideoElement | null) => {
-    if (typeof document === 'undefined' || !video) {
-      setIsPictureInPictureSupported(false);
-      setIsInPictureInPicture(false);
-      return;
-    }
-    const pipDoc = document as any;
-    const pipVid = video as any;
-    const supportsStandard = !!pipDoc.pictureInPictureEnabled && typeof pipVid.requestPictureInPicture === 'function' && !pipVid.disablePictureInPicture;
-    const supportsWebkit = typeof pipVid.webkitSupportsPresentationMode === 'function' && pipVid.webkitSupportsPresentationMode('picture-in-picture');
-    setIsPictureInPictureSupported(supportsStandard || supportsWebkit);
-    setIsInPictureInPicture(pipDoc.pictureInPictureElement === video || pipVid.webkitPresentationMode === 'picture-in-picture');
-  }, []);
-
-  const enterPictureInPicture = React.useCallback(async (): Promise<boolean> => {
-    if (!activeVideoElement) return false;
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
-      const v = activeVideoElement as any;
-      if (v.requestPictureInPicture) await v.requestPictureInPicture();
-      else if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('picture-in-picture');
-      syncPictureInPictureState(v);
-      return true;
-    } catch (err) {
-      setError('PiP não suportado.');
-      setTimeout(() => setError(null), 3000);
-      return false;
-    }
-  }, [activeVideoElement, syncPictureInPictureState]);
-
-  const togglePictureInPicture = React.useCallback(async () => {
-    if (!activeVideoElement) return;
-    const doc = document as any;
-    const v = activeVideoElement as any;
-    if (doc.pictureInPictureElement === activeVideoElement || v.webkitPresentationMode === 'picture-in-picture') {
-      if (doc.exitPictureInPicture) await doc.exitPictureInPicture();
-      else if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('inline');
-    } else {
-      await enterPictureInPicture();
-    }
-    syncPictureInPictureState(v);
-  }, [activeVideoElement, enterPictureInPicture, syncPictureInPictureState]);
 
   // Sync state with Video Events
   useEffect(() => {
     if (!activeVideoElement) return;
     const v = activeVideoElement;
     const upPlay = () => {
-      const playing = !v.paused && !v.ended;
-      setIsPlaying(playing);
+        const playing = !v.paused && !v.ended;
+        setIsPlaying(playing);
 
-      if (playing) {
-        setLoading(false);
-        markPlaybackProgress(v.currentTime);
-        markTelemetryPlaying();
-      } else {
-        finalizeTelemetryPhases();
-      }
+        if (playing) {
+            setLoading(false);
+            markPlaybackProgress(v.currentTime);
+            markTelemetryPlaying();
+        } else {
+            finalizeTelemetryPhases();
+        }
     };
     const upProg = () => {
-      setCurrentTime(v.currentTime);
-      setDuration(v.duration);
+        setCurrentTime(v.currentTime);
+        setDuration(v.duration);
 
-      if (!v.paused && !v.ended) {
-        setLoading(false);
-        markPlaybackProgress(v.currentTime);
-        markTelemetryPlaying();
-      }
+        if (!v.paused && !v.ended) {
+            setLoading(false);
+            markPlaybackProgress(v.currentTime);
+            markTelemetryPlaying();
+        }
     };
     const upVol = () => { setVolume(v.volume); setIsMuted(v.muted); };
     const upPiP = () => syncPictureInPictureState(v);
     const onBuffering = () => {
-      if (!v.paused && !v.ended) {
-        setLoading(true);
-        markTelemetryBuffering();
-      }
+        if (!v.paused && !v.ended) {
+            setLoading(true);
+            markTelemetryBuffering();
+        }
     };
     const onEnded = () => {
-      setIsPlaying(false);
-      finalizeTelemetryPhases();
-      if (isLiveStream) restartPlayback('ended');
+        setIsPlaying(false);
+        finalizeTelemetryPhases();
+        if (isLiveStream) restartPlayback('ended');
     };
 
     v.addEventListener('play', upPlay);
@@ -677,20 +713,20 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     upPlay(); upProg(); upVol(); upPiP();
 
     return () => {
-      v.removeEventListener('play', upPlay);
-      v.removeEventListener('pause', upPlay);
-      v.removeEventListener('playing', upPlay);
-      v.removeEventListener('timeupdate', upProg);
-      v.removeEventListener('durationchange', upProg);
-      v.removeEventListener('volumechange', upVol);
-      v.removeEventListener('waiting', onBuffering);
-      v.removeEventListener('stalled', onBuffering);
-      v.removeEventListener('emptied', onBuffering);
-      v.removeEventListener('ended', onEnded);
-      v.removeEventListener('enterpictureinpicture', upPiP);
-      v.removeEventListener('leavepictureinpicture', upPiP);
-      v.removeEventListener('webkitpresentationmodechanged', upPiP);
-      v.removeEventListener('loadedmetadata', upPiP);
+        v.removeEventListener('play', upPlay);
+        v.removeEventListener('pause', upPlay);
+        v.removeEventListener('playing', upPlay);
+        v.removeEventListener('timeupdate', upProg);
+        v.removeEventListener('durationchange', upProg);
+        v.removeEventListener('volumechange', upVol);
+        v.removeEventListener('waiting', onBuffering);
+        v.removeEventListener('stalled', onBuffering);
+        v.removeEventListener('emptied', onBuffering);
+        v.removeEventListener('ended', onEnded);
+        v.removeEventListener('enterpictureinpicture', upPiP);
+        v.removeEventListener('leavepictureinpicture', upPiP);
+        v.removeEventListener('webkitpresentationmodechanged', upPiP);
+        v.removeEventListener('loadedmetadata', upPiP);
     };
   }, [activeVideoElement, finalizeTelemetryPhases, isLiveStream, markPlaybackProgress, markTelemetryBuffering, markTelemetryPlaying, restartPlayback, syncPictureInPictureState]);
 
@@ -706,36 +742,39 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     window.addEventListener('keydown', handleAct);
     window.addEventListener('mousemove', handleAct);
     return () => {
-      if (idleTimer.current) clearTimeout(idleTimer.current);
-      window.removeEventListener('keydown', handleAct);
-      window.removeEventListener('mousemove', handleAct);
+        if (idleTimer.current) clearTimeout(idleTimer.current);
+        window.removeEventListener('keydown', handleAct);
+        window.removeEventListener('mousemove', handleAct);
     };
   }, [isPreview, resetIdleTimer]);
 
   // Progress Persistence
   useEffect(() => {
+    // For VOD, clear the flags on URL change
+    initialSeekDone.current = false;
+    lastSavedTime.current = 0;
+  }, [url]);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       if (!activeVideoElement) return;
       const t = activeVideoElement.currentTime;
       const d = activeVideoElement.duration;
-      if (!d || d === Infinity || t <= 0) return;
+      if (!d || d === Infinity) return;
 
-      if (!initialSeekDone.current) {
-        const saved = useStore.getState().playbackProgress[progressId];
-        if (saved && saved.currentTime > 15 && saved.currentTime < d - 15) {
-          activeVideoElement.currentTime = saved.currentTime;
+      // Initial seek from history (VOD only)
+      if (!isLiveStream && !initialSeekDone.current && t < 1) {
+        const savedTime = watchHistory[url];
+        if (savedTime && savedTime > 5 && savedTime < d - 5) {
+          activeVideoElement.currentTime = savedTime;
         }
         initialSeekDone.current = true;
       }
 
-      if (Math.abs(t - lastSavedTime.current) > 5) {
+      // Throttle saving: only save if we progressed at least 5 seconds
+      if (!isLiveStream && t > 0 && Math.abs(t - lastSavedTime.current) > 5) {
         lastSavedTime.current = t;
-        setPlaybackProgress(progressId, t, d);
-      }
-
-      if (userId && Math.abs(t - lastSyncedTime.current) > 60) {
-        lastSyncedTime.current = t;
-        syncProgressToSupabase(userId, progressId, t, d);
+        updateWatchHistory(url, Math.floor(t));
       }
 
       // Next episode countdown
@@ -750,7 +789,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [activeVideoElement, progressId, userId, setPlaybackProgress, syncProgressToSupabase, onPlayNextEpisode]);
+  }, [activeVideoElement, url, watchHistory, updateWatchHistory, onPlayNextEpisode, isLiveStream]);
 
   useEffect(() => {
     if (!activeVideoElement || !isLiveStream || error) return;
@@ -781,31 +820,6 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
 
     return () => window.clearInterval(interval);
   }, [activeVideoElement, error, isInPictureInPicture, isLiveStream, markPlaybackProgress, restartPlayback]);
-
-  // Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (isSidebarOpen || showQualityMenu) {
-         if (e.key === 'Escape') { setIsSidebarOpen(false); setShowQualityMenu(false); }
-         return;
-      }
-
-      switch(e.key.toLowerCase()) {
-        case ' ':
-        case 'k': e.preventDefault(); togglePlay(); break;
-        case 'f': e.preventDefault(); toggleFullScreen(); break;
-        case 'm': e.preventDefault(); toggleMute(); break;
-        case 'l': e.preventDefault(); skipTime(10); break;
-        case 'j': e.preventDefault(); skipTime(-10); break;
-        case 'escape': e.preventDefault(); flushTelemetrySession('close'); onClose(); break;
-        case 'arrowright': e.preventDefault(); internalMedia?.type === 'live' ? goToAdjacentChannel(1) : skipTime(10); break;
-        case 'arrowleft': e.preventDefault(); internalMedia?.type === 'live' ? goToAdjacentChannel(-1) : skipTime(-10); break;
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, toggleMute, skipTime, goToAdjacentChannel, internalMedia?.type, isSidebarOpen, showQualityMenu, onClose]);
 
   // ── Player Lifecycle ──
   function destroyPlayer() {

@@ -14,9 +14,13 @@
     "lint": "eslint . --ext .ts,.tsx",
     "analyze": "source-map-explorer 'dist/assets/*.js'",
     "build:all": "npm run build",
+    "build:android": "tsc && vite build && npx cap sync android",
     "start": "node dist/server/server.js"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
     "@google/genai": "^1.29.0",
     "@supabase/supabase-js": "^2.100.1",
     "@tailwindcss/vite": "^4.1.14",

@@ -7,6 +7,7 @@ import { useTMDB } from '../hooks/useTMDB';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
 import { CategoryRow } from './CategoryRow';
+import { cleanMediaTitle } from '../lib/titleCleaner';
 
 interface MediaDetailsPageProps {
   media: Media;
@@ -36,11 +37,11 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
   }, [media]);
 
   const allCategories = useStore(state => state.allCategories);
-  const playbackProgress = useStore(state => state.playbackProgress);
+  const watchHistory = useStore(state => state.watchHistory);
   const favorites = useStore(state => state.favorites);
   const toggleFavorite = useStore(state => state.toggleFavorite);
   const { data: tmdbData, loading: tmdbLoading } = useTMDB(media.title, media.type);
-  const isFavorite = favorites.includes(media.id);
+  const isFavorite = favorites.includes(media.videoUrl);
 
   const relatedCategory = useMemo(() => {
     // Busca a categoria que contém o conteúdo atual
@@ -193,7 +194,7 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
               transition={{ duration: 0.6, delay: 0.3 }}
               style={{ flex: 1 }}
             >
-              <Text style={[styles.title, layout.isCompact && styles.titleCompact]}>{media.title}</Text>
+              <Text style={[styles.title, layout.isCompact && styles.titleCompact]}>{cleanMediaTitle(media.title).cleanTitle}</Text>
 
               {/* Meta badges */}
               <View style={styles.metaRow}>
@@ -230,7 +231,7 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
                 )}
 
                 <TouchableHighlight
-                  onPress={() => toggleFavorite(media.id)}
+                  onPress={() => toggleFavorite(media.videoUrl)}
                   style={styles.circleBtn}
                   underlayColor="rgba(255,255,255,0.15)"
                 >
@@ -296,9 +297,8 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
              
              <View style={styles.episodesGrid}>
                {media.seasons.find(s => s.seasonNumber === selectedSeason)?.episodes.map((ep, idx) => {
-                 const progress = playbackProgress[ep.id];
-                 const percentComplete = progress && progress.duration > 0 ? (progress.currentTime / progress.duration) * 100 : 0;
-                 const isWatched = percentComplete > 90;
+                 const currentPos = watchHistory[ep.videoUrl];
+                 const isStarted = currentPos && currentPos > 10;
 
                  return (
                  <TouchableHighlight
@@ -314,23 +314,18 @@ export const MediaDetailsPage: React.FC<MediaDetailsPageProps> = ({
                    style={styles.episodeCard}
                  >
                    <View style={[styles.episodeInner, { overflow: 'hidden' }]}>
-                     <View style={[styles.episodeIndex, isWatched && { opacity: 0.5 }]}>
+                     <View style={[styles.episodeIndex, isStarted && { opacity: 0.5 }]}>
                        <Text style={styles.episodeIndexText}>{idx + 1}</Text>
                      </View>
                      <View style={styles.episodeInfo}>
-                       <Text style={[styles.episodeTitle, isWatched && { color: '#9CA3AF' }]}>{ep.title}</Text>
+                       <Text style={[styles.episodeTitle, isStarted && { color: '#E50914' }]}>{ep.title}</Text>
                        <Text style={styles.episodeSubtitle}>
-                         Episódio {ep.episodeNumber} {isWatched ? '• Assistido' : ''}
+                         Episódio {ep.episodeNumber} {isStarted ? `• Em andamento (${Math.floor(currentPos / 60)}m)` : ''}
                        </Text>
                      </View>
-                     <View style={[styles.episodePlayIcon, isWatched && { opacity: 0.5 }]}>
-                       <Play size={20} color={isWatched ? "#9CA3AF" : "white"} />
+                     <View style={styles.episodePlayIcon}>
+                       <Play size={20} color="white" />
                      </View>
-                     {percentComplete > 0 && !isWatched && (
-                       <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, backgroundColor: 'rgba(255,255,255,0.1)' }}>
-                         <View style={{ height: '100%', backgroundColor: '#E50914', width: `${Math.min(100, percentComplete)}%` }} />
-                       </View>
-                     )}
                    </View>
                  </TouchableHighlight>
                  );
