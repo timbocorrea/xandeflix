@@ -12,7 +12,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const { setIsAdminMode } = useStore();
+  const { setIsAdminMode, setAdultAccessSettings } = useStore();
 
   const handleLogin = async () => {
     if (!identifier.trim()) {
@@ -39,10 +39,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       }
 
       if (result.type === 'admin') {
+        setAdultAccessSettings(null);
         setIsAdminMode(true);
         onLoginSuccess(undefined, undefined, result.sessionToken, 'admin');
       } else if (result.type === 'user') {
         setIsAdminMode(false);
+        setAdultAccessSettings(result.data?.adultAccess);
         onLoginSuccess(result.data?.playlistUrl, result.data?.id, result.sessionToken, 'user');
       }
     } catch (err) {

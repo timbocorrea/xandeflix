@@ -119,6 +119,9 @@ function serializeUser(user: {
   playlistUrl: string;
   isBlocked: boolean;
   lastAccess?: string;
+  adultPassword?: string;
+  adultTotpSecret?: string;
+  adultTotpEnabled?: boolean;
 }) {
   return {
     id: user.id,
@@ -127,7 +130,26 @@ function serializeUser(user: {
     playlistUrl: user.playlistUrl,
     isBlocked: user.isBlocked,
     lastAccess: user.lastAccess,
+    adultAccess: AdminService.getAdultAccessSummary(user),
   };
+}
+
+async function getAuthenticatedUser(req: express.Request) {
+  const session = AuthSessionService.getSession(getRequestAuthToken(req));
+  if (!session || session.role !== 'user' || !session.userId) {
+    return { session: null, user: null };
+  }
+
+  const user = await AdminService.getUserById(session.userId);
+  if (!user || user.isBlocked) {
+    return { session, user: null };
+  }
+
+  if (user.playlistUrl) {
+    registerAuthorizedDomainFromUrl(user.playlistUrl);
+  }
+
+  return { session, user };
 }
 
 
@@ -469,18 +491,9 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/auth/me', async (req, res) => {
   try {
-    const session = AuthSessionService.getSession(getRequestAuthToken(req));
-    if (!session || session.role !== 'user' || !session.userId) {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    const user = await AdminService.getUserById(session.userId);
-    if (!user || user.isBlocked) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    if (user.playlistUrl) {
-      registerAuthorizedDomainFromUrl(user.playlistUrl);
     }
 
     res.json(serializeUser(user));
@@ -504,13 +517,9 @@ app.get('/api/auth/session', async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const user = await AdminService.getUserById(session.userId);
-    if (!user || user.isBlocked) {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    if (user.playlistUrl) {
-      registerAuthorizedDomainFromUrl(user.playlistUrl);
     }
 
     res.json({
@@ -519,6 +528,93 @@ app.get('/api/auth/session', async (req, res) => {
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/user/adult-access/unlock', async (req, res) => {
+  try {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { password } = req.body || {};
+    const adultAccess = await AdminService.verifyAdultAccess(user.id, password || '');
+    res.json({ ok: true, adultAccess });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/user/adult-access/password', async (req, res) => {
+  try {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { newPassword, currentPassword, totpCode } = req.body || {};
+    const adultAccess = await AdminService.setAdultPassword(
+      user.id,
+      newPassword || '',
+      currentPassword,
+      totpCode,
+    );
+
+    res.json({ ok: true, adultAccess });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/user/adult-access/totp/setup', async (req, res) => {
+  try {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { adultPassword } = req.body || {};
+    const setup = await AdminService.beginAdultTotpSetup(user.id, adultPassword || '');
+    res.json({ ok: true, ...setup });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/user/adult-access/totp/verify', async (req, res) => {
+  try {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { adultPassword, pendingSecret, code } = req.body || {};
+    const adultAccess = await AdminService.confirmAdultTotpSetup(
+      user.id,
+      adultPassword || '',
+      pendingSecret || '',
+      code || '',
+    );
+
+    res.json({ ok: true, adultAccess });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/user/adult-access/totp/disable', async (req, res) => {
+  try {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { adultPassword, code } = req.body || {};
+    const adultAccess = await AdminService.disableAdultTotp(user.id, adultPassword || '', code || '');
+    res.json({ ok: true, adultAccess });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
   }
 });
 
@@ -540,7 +636,7 @@ app.post('/api/player-telemetry', async (req, res) => {
 app.get('/api/admin/users', adminAuthMiddleware, async (req, res) => {
   try {
     const users = await AdminService.listUsers();
-    res.json(users);
+    res.json(users.map((user) => AdminService.toPublicUser(user)));
   } catch (e: any) {
     console.error('[API] Erro detalhado ao listar usuários no Admin:', e);
     res.status(500).json({ 
@@ -566,7 +662,7 @@ app.post('/api/admin/user/add', adminAuthMiddleware, async (req, res) => {
   try {
     const { name, playlistUrl, username, password } = req.body;
     const user = await AdminService.addUser(name, playlistUrl, username, password);
-    res.status(201).json(user);
+    res.status(201).json(AdminService.toPublicUser(user));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

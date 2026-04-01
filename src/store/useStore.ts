@@ -10,6 +10,11 @@ type PlaybackProgressEntry = {
 
 type PlaybackProgressMap = Record<string, PlaybackProgressEntry>;
 
+export type AdultAccessState = {
+  enabled: boolean;
+  totpEnabled: boolean;
+};
+
 const STORAGE_KEYS = {
   authRole: 'xandeflix_auth_role',
   adminMode: 'xandeflix_admin_mode',
@@ -17,6 +22,7 @@ const STORAGE_KEYS = {
   hiddenCategories: 'xandeflix_hidden_categories',
   favorites: 'xandeflix_favorites',
   playbackProgress: 'xandeflix_playback_progress',
+  adultUnlocked: 'xandeflix_adult_unlocked',
 } as const;
 
 function getStorage(): Storage | null {
@@ -26,6 +32,18 @@ function getStorage(): Storage | null {
 
   try {
     return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function getSessionStorage(): Storage | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    return window.sessionStorage;
   } catch {
     return null;
   }
@@ -57,8 +75,7 @@ function writeStorageValue<T>(key: string, value: T): void {
   storage.setItem(key, JSON.stringify(value));
 }
 
-function getScopedStorageKey(baseKey: string, userId?: string): string | null {
-  const storage = getStorage();
+function getScopedStorageKey(baseKey: string, userId?: string, storage = getStorage()): string | null {
   if (!storage) {
     return null;
   }
@@ -99,6 +116,28 @@ function writeScopedStorageValue<T>(baseKey: string, value: T, userId?: string):
   writeStorageValue(scopedKey, value);
 }
 
+function readScopedSessionValue<T>(baseKey: string, fallbackValue: T, userId?: string): T {
+  const storage = getSessionStorage();
+  const scopedKey = getScopedStorageKey(baseKey, userId, storage);
+
+  if (!storage || !scopedKey) {
+    return fallbackValue;
+  }
+
+  return readJsonValue(storage.getItem(scopedKey), fallbackValue);
+}
+
+function writeScopedSessionValue<T>(baseKey: string, value: T, userId?: string): void {
+  const storage = getSessionStorage();
+  const scopedKey = getScopedStorageKey(baseKey, userId, storage);
+
+  if (!storage || !scopedKey) {
+    return;
+  }
+
+  storage.setItem(scopedKey, JSON.stringify(value));
+}
+
 function getInitialFavorites(): string[] {
   return readScopedStorageValue<string[]>(STORAGE_KEYS.favorites, []);
 }
@@ -136,6 +175,12 @@ interface XandeflixState {
   managedUsers: any[];
   setManagedUsers: (users: any[]) => void;
 
+  adultAccess: AdultAccessState;
+  setAdultAccessSettings: (settings?: Partial<AdultAccessState> | null) => void;
+  isAdultUnlocked: boolean;
+  unlockAdultContent: () => void;
+  lockAdultContent: () => void;
+
   favorites: string[];
   toggleFavorite: (mediaId: string) => void;
   hydrateProfileState: (userId?: string) => void;
@@ -153,6 +198,8 @@ export const useStore = create<XandeflixState>((set) => ({
     getStorage()?.getItem(STORAGE_KEYS.authRole) === 'admin' ||
     getStorage()?.getItem(STORAGE_KEYS.adminMode) === 'true',
   managedUsers: [],
+  adultAccess: { enabled: false, totpEnabled: false },
+  isAdultUnlocked: readScopedSessionValue<boolean>(STORAGE_KEYS.adultUnlocked, false),
   hiddenCategoryIds: readStorageValue<string[]>(STORAGE_KEYS.hiddenCategories, []),
   playbackProgress: getInitialPlaybackProgress(),
   favorites: getInitialFavorites(),
@@ -169,6 +216,28 @@ export const useStore = create<XandeflixState>((set) => ({
     set({ isAdminMode: mode });
   },
   setManagedUsers: (users) => set({ managedUsers: users }),
+  setAdultAccessSettings: (settings) => {
+    const enabled = Boolean(settings?.enabled);
+    if (!enabled) {
+      writeScopedSessionValue(STORAGE_KEYS.adultUnlocked, false);
+    }
+
+    set((state) => ({
+      adultAccess: {
+        enabled,
+        totpEnabled: Boolean(settings?.totpEnabled),
+      },
+      isAdultUnlocked: enabled ? state.isAdultUnlocked : false,
+    }));
+  },
+  unlockAdultContent: () => {
+    writeScopedSessionValue(STORAGE_KEYS.adultUnlocked, true);
+    set({ isAdultUnlocked: true });
+  },
+  lockAdultContent: () => {
+    writeScopedSessionValue(STORAGE_KEYS.adultUnlocked, false);
+    set({ isAdultUnlocked: false });
+  },
   setHiddenCategoryIds: (ids) => {
     writeStorageValue(STORAGE_KEYS.hiddenCategories, ids);
     set({ hiddenCategoryIds: ids });
@@ -226,6 +295,8 @@ export const useStore = create<XandeflixState>((set) => ({
       selectedMedia: null,
       isSettingsVisible: false,
       isUsingMock: false,
+      adultAccess: useStore.getState().adultAccess,
+      isAdultUnlocked: readScopedSessionValue<boolean>(STORAGE_KEYS.adultUnlocked, false, userId),
       favorites: readScopedStorageValue<string[]>(STORAGE_KEYS.favorites, [], userId),
       playbackProgress: readScopedStorageValue<PlaybackProgressMap>(STORAGE_KEYS.playbackProgress, {}, userId),
     });
@@ -238,6 +309,8 @@ export const useStore = create<XandeflixState>((set) => ({
       selectedMedia: null,
       isSettingsVisible: false,
       isUsingMock: false,
+      adultAccess: { enabled: false, totpEnabled: false },
+      isAdultUnlocked: false,
       favorites: [],
       playbackProgress: {},
     });

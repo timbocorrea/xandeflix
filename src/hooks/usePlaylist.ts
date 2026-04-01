@@ -23,7 +23,7 @@ export const usePlaylist = () => {
   const [playlistStatus, setPlaylistStatus] = useState<PlaylistStatus>('idle');
   const [playlistError, setPlaylistError] = useState<PlaylistError | null>(null);
   const [playlistSource, setPlaylistSource] = useState<string>('');
-  const { setAllCategories, setIsUsingMock } = useStore();
+  const { setAllCategories, setIsUsingMock, setAdultAccessSettings } = useStore();
 
   const fetchPlaylist = useCallback(async () => {
     const hasData = useStore.getState().allCategories.length > 0;
@@ -51,6 +51,7 @@ export const usePlaylist = () => {
         });
         if (meResponse.ok) {
           const userData = await meResponse.json();
+          setAdultAccessSettings(userData.adultAccess);
           if (userData.playlistUrl) {
             playlistUrl = userData.playlistUrl;
             localStorage.setItem('xandeflix_playlist_url', playlistUrl);
@@ -137,7 +138,7 @@ export const usePlaylist = () => {
     } finally {
       setLoading(false);
     }
-  }, [setAllCategories, setIsUsingMock]);
+  }, [setAdultAccessSettings, setAllCategories, setIsUsingMock]);
 
   return { fetchPlaylist, loading, playlistStatus, playlistError, playlistSource };
 };

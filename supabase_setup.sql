@@ -18,8 +18,15 @@ CREATE TABLE IF NOT EXISTS public.xandeflix_users (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     hidden_categories JSONB DEFAULT '[]'::jsonb,
     category_overrides JSONB DEFAULT '{}'::jsonb,
-    media_overrides JSONB DEFAULT '{}'::jsonb
+    media_overrides JSONB DEFAULT '{}'::jsonb,
+    adult_password TEXT,
+    adult_totp_secret TEXT,
+    adult_totp_enabled BOOLEAN DEFAULT false
 );
+
+ALTER TABLE public.xandeflix_users ADD COLUMN IF NOT EXISTS adult_password TEXT;
+ALTER TABLE public.xandeflix_users ADD COLUMN IF NOT EXISTS adult_totp_secret TEXT;
+ALTER TABLE public.xandeflix_users ADD COLUMN IF NOT EXISTS adult_totp_enabled BOOLEAN DEFAULT false;
 
 -- Tabela para correções globais (aplicadas a todos os usuários que tiverem o mesmo nome de arquivo)
 CREATE TABLE IF NOT EXISTS public.global_media_overrides (

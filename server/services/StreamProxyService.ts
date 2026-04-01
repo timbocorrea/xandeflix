@@ -101,12 +101,18 @@ export class StreamProxyService {
       }
 
       // Detect Content Type overrides
-      const isTS = urlLower.includes('.ts') || urlLower.includes('output=ts') || 
-                   urlLower.includes('output=mpegts') ||
-                   (response.headers['content-type'] && response.headers['content-type'].includes('video/mp2t'));
+      const isTS =
+        urlLower.includes('.ts') ||
+        urlLower.includes('output=ts') ||
+        urlLower.includes('output=mpegts') ||
+        contentType.includes('video/mp2t') ||
+        contentType.includes('mpegts');
 
-      const isHLS = urlLower.includes('.m3u8') || urlLower.includes('output=hls') ||
-                    (response.headers['content-type'] && response.headers['content-type'].includes('application/x-mpegURL'));
+      const isHLS =
+        urlLower.includes('.m3u8') ||
+        urlLower.includes('output=hls') ||
+        contentType.includes('application/x-mpegurl') ||
+        contentType.includes('application/vnd.apple.mpegurl');
 
       if (isTS) res.setHeader('Content-Type', 'video/mp2t');
       else if (isHLS) res.setHeader('Content-Type', 'application/x-mpegURL');

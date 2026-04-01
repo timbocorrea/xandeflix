@@ -5,6 +5,7 @@ import { useTMDB } from '../hooks/useTMDB';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
 import { ChevronLeft, ChevronRight, LayoutGrid, Heart } from 'lucide-react';
+import { isAdultCategory as checkAdultCategory } from '../lib/adultContent';
 
 interface MediaItemProps {
   item: Media;
@@ -170,12 +171,7 @@ export const CategoryRow: React.FC<CategoryRowProps> = React.memo(({
   const showNavButtons = layout.isDesktop && isHovered;
 
   const isAdultCategory = React.useMemo(() => {
-    const titleUpper = category.title.toUpperCase();
-    return titleUpper.includes('18+') || 
-           titleUpper.includes('+18') || 
-           titleUpper.includes('ADULT') || 
-           titleUpper.includes('XXX') || 
-           titleUpper.includes('HOT');
+    return checkAdultCategory(category);
   }, [category.title]);
 
   const handleScroll = (direction: 'left' | 'right') => {

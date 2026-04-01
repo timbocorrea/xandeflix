@@ -2,6 +2,12 @@ import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
 import { supabase } from '../lib/supabase.js';
+import { TOTPService } from './TOTPService.js';
+
+export interface AdultAccessSummary {
+  enabled: boolean;
+  totpEnabled: boolean;
+}
 
 export interface UserRecord {
   id: string;
@@ -15,6 +21,9 @@ export interface UserRecord {
   hiddenCategories?: string[];
   categoryOverrides?: Record<string, string>;
   mediaOverrides?: Record<string, any>;
+  adultPassword?: string;
+  adultTotpSecret?: string;
+  adultTotpEnabled?: boolean;
 }
 
 interface SupabaseUserRow {
@@ -30,6 +39,9 @@ interface SupabaseUserRow {
   hidden_categories?: string[] | null;
   category_overrides?: Record<string, string> | null;
   media_overrides?: Record<string, any> | null;
+  adult_password?: string | null;
+  adult_totp_secret?: string | null;
+  adult_totp_enabled?: boolean | null;
 }
 
 const USERS_FILE = path.join(process.cwd(), 'users.json');
@@ -78,6 +90,25 @@ export class AdminService {
     return new Error(
       `${action} exige persistencia no Supabase neste ambiente. Configure o backend com acesso de escrita ao banco.${suffix}`,
     );
+  }
+
+  private static createSchemaSetupError(feature: string, cause?: unknown): Error {
+    const detail = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+    const suffix = detail ? ` Detalhe: ${detail}` : '';
+    return new Error(
+      `O recurso de ${feature} exige executar o SQL atualizado no Supabase para criar as colunas necessarias.${suffix}`,
+    );
+  }
+
+  private static isMissingSchemaError(error: unknown): boolean {
+    const message =
+      error instanceof Error
+        ? `${error.message}`
+        : typeof error === 'string'
+        ? error
+        : JSON.stringify(error || {});
+
+    return /schema cache|column .* does not exist|Could not find .* in the schema cache|PGRST/i.test(message);
   }
 
   private static normalizeIdentifier(value: string): string {
@@ -129,6 +160,24 @@ export class AdminService {
       hiddenCategories: user.hidden_categories || [],
       categoryOverrides: user.category_overrides || {},
       mediaOverrides: user.media_overrides || {},
+      adultPassword: user.adult_password || undefined,
+      adultTotpSecret: user.adult_totp_secret || undefined,
+      adultTotpEnabled: Boolean(user.adult_totp_enabled && user.adult_totp_secret),
+    };
+  }
+
+  public static getAdultAccessSummary(user?: Partial<UserRecord> | null): AdultAccessSummary {
+    return {
+      enabled: Boolean(user?.adultPassword),
+      totpEnabled: Boolean(user?.adultTotpEnabled && user?.adultTotpSecret),
+    };
+  }
+
+  public static toPublicUser(user: UserRecord) {
+    const { password, adultPassword, adultTotpSecret, ...publicUser } = user;
+    return {
+      ...publicUser,
+      adultAccess: this.getAdultAccessSummary(user),
     };
   }
 
@@ -184,15 +233,26 @@ export class AdminService {
     let migratedCount = 0;
 
     this.users = this.users.map((user) => {
-      if (!user.password || this.isHash(user.password)) {
+      const nextUser = { ...user };
+      let changed = false;
+
+      if (nextUser.password && !this.isHash(nextUser.password)) {
+        nextUser.password = this.hashPassword(nextUser.password);
+        migratedCount += 1;
+        changed = true;
+      }
+
+      if (nextUser.adultPassword && !this.isHash(nextUser.adultPassword)) {
+        nextUser.adultPassword = this.hashPassword(nextUser.adultPassword);
+        migratedCount += 1;
+        changed = true;
+      }
+
+      if (!changed) {
         return user;
       }
 
-      migratedCount += 1;
-      return {
-        ...user,
-        password: this.hashPassword(user.password),
-      };
+      return nextUser;
     });
 
     return migratedCount;
@@ -215,6 +275,15 @@ export class AdminService {
         }
         if (!pUser.mediaOverrides || Object.keys(pUser.mediaOverrides).length === 0) {
           pUser.mediaOverrides = sUser.mediaOverrides;
+        }
+        if (!pUser.adultPassword && sUser.adultPassword) {
+          pUser.adultPassword = sUser.adultPassword;
+        }
+        if (!pUser.adultTotpSecret && sUser.adultTotpSecret) {
+          pUser.adultTotpSecret = sUser.adultTotpSecret;
+        }
+        if (!pUser.adultTotpEnabled && sUser.adultTotpEnabled) {
+          pUser.adultTotpEnabled = sUser.adultTotpEnabled;
         }
       }
     }
@@ -342,7 +411,11 @@ export class AdminService {
 
     try {
       const supabaseUsers = await this.listSupabaseUsers();
-      const legacyUsers = supabaseUsers.filter((user) => user.password && !this.isHash(user.password));
+      const legacyUsers = supabaseUsers.filter(
+        (user) =>
+          (user.password && !this.isHash(user.password)) ||
+          (user.adultPassword && !this.isHash(user.adultPassword)),
+      );
 
       if (legacyUsers.length === 0) {
         console.log('[SYNC] No legacy Supabase passwords to migrate.');
@@ -354,7 +427,14 @@ export class AdminService {
       for (const user of legacyUsers) {
         const { error } = await supabase
           .from('xandeflix_users')
-          .update({ password: this.hashPassword(user.password || '') })
+          .update({
+            ...(user.password && !this.isHash(user.password)
+              ? { password: this.hashPassword(user.password) }
+              : {}),
+            ...(user.adultPassword && !this.isHash(user.adultPassword)
+              ? { adult_password: this.hashPassword(user.adultPassword) }
+              : {}),
+          })
           .eq('id', user.id);
 
         if (error) {
@@ -424,6 +504,18 @@ export class AdminService {
             console.log(`[SYNC] Updated password hash in Supabase for "${localUser.username}".`);
           }
 
+          if (localUser.adultPassword && !mapped.adultPassword) {
+            await supabase
+              .from('xandeflix_users')
+              .update({
+                adult_password: this.hashPassword(localUser.adultPassword),
+                adult_totp_secret: localUser.adultTotpSecret || null,
+                adult_totp_enabled: Boolean(localUser.adultTotpEnabled && localUser.adultTotpSecret),
+              })
+              .eq('id', existing.id);
+            console.log(`[SYNC] Updated adult protection in Supabase for "${localUser.username}".`);
+          }
+
           localUser.id = existing.id;
           console.log(`[SYNC] Linked local user "${localUser.username}" (${oldId}) → Supabase (${existing.id})`);
         } else {
@@ -438,6 +530,9 @@ export class AdminService {
               playlist_url: localUser.playlistUrl,
               is_blocked: localUser.isBlocked,
               role: localUser.role || 'user',
+              adult_password: localUser.adultPassword ? this.hashPassword(localUser.adultPassword) : null,
+              adult_totp_secret: localUser.adultTotpSecret || null,
+              adult_totp_enabled: Boolean(localUser.adultTotpEnabled && localUser.adultTotpSecret),
             })
             .select('*')
             .maybeSingle();
@@ -500,6 +595,15 @@ export class AdminService {
            }
            if (!supabaseUser.mediaOverrides || Object.keys(supabaseUser.mediaOverrides).length === 0) {
              supabaseUser.mediaOverrides = localUser.mediaOverrides;
+           }
+           if (!supabaseUser.adultPassword && localUser.adultPassword) {
+             supabaseUser.adultPassword = localUser.adultPassword;
+           }
+           if (!supabaseUser.adultTotpSecret && localUser.adultTotpSecret) {
+             supabaseUser.adultTotpSecret = localUser.adultTotpSecret;
+           }
+           if (!supabaseUser.adultTotpEnabled && localUser.adultTotpEnabled) {
+             supabaseUser.adultTotpEnabled = localUser.adultTotpEnabled;
            }
         }
       }
@@ -729,6 +833,249 @@ export class AdminService {
     return this.globalOverrides;
   }
 
+  private static async persistAdultSettings(
+    userId: string,
+    data: {
+      adultPassword?: string | null;
+      adultTotpSecret?: string | null;
+      adultTotpEnabled?: boolean;
+    },
+  ): Promise<UserRecord | null> {
+    const localPayload: Partial<UserRecord> = {
+      ...(data.adultPassword !== undefined
+        ? { adultPassword: data.adultPassword || undefined }
+        : {}),
+      ...(data.adultTotpSecret !== undefined
+        ? { adultTotpSecret: data.adultTotpSecret || undefined }
+        : {}),
+      ...(data.adultTotpEnabled !== undefined
+        ? { adultTotpEnabled: data.adultTotpEnabled }
+        : {}),
+    };
+
+    if (this.isUuid(userId)) {
+      try {
+        if (!supabase) {
+          throw new Error('Supabase indisponivel');
+        }
+
+        const { data: updatedUser, error } = await supabase
+          .from('xandeflix_users')
+          .update({
+            ...(data.adultPassword !== undefined ? { adult_password: data.adultPassword } : {}),
+            ...(data.adultTotpSecret !== undefined ? { adult_totp_secret: data.adultTotpSecret } : {}),
+            ...(data.adultTotpEnabled !== undefined ? { adult_totp_enabled: data.adultTotpEnabled } : {}),
+          })
+          .eq('id', userId)
+          .select('*')
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        if (updatedUser) {
+          this.syncLocalUser(userId, localPayload);
+          return this.mapSupabaseUser(updatedUser as SupabaseUserRow);
+        }
+      } catch (err) {
+        if (this.isMissingSchemaError(err)) {
+          throw this.createSchemaSetupError('controle de conteudo adulto', err);
+        }
+
+        if (!this.canFallbackToLocal()) {
+          throw this.createPersistenceError(`Atualizar protecao adulta do usuario ${userId}`, err);
+        }
+
+        console.warn(`[ADMIN] Supabase error (updating adult settings for ${userId}), falling back to local file:`, err);
+      }
+    }
+
+    if (!this.canFallbackToLocal()) {
+      throw this.createPersistenceError(`Atualizar protecao adulta do usuario ${userId}`);
+    }
+
+    const userIndex = this.users.findIndex((user) => user.id === userId);
+    if (userIndex === -1) {
+      return null;
+    }
+
+    this.users[userIndex] = {
+      ...this.users[userIndex],
+      ...localPayload,
+    };
+    this.saveUsers();
+    return { ...this.users[userIndex] };
+  }
+
+  public static async verifyAdultAccess(userId: string, password: string): Promise<AdultAccessSummary> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      throw new Error('Usuario nao encontrado.');
+    }
+
+    if (!user.adultPassword) {
+      throw new Error('A protecao de conteudo adulto ainda nao foi configurada.');
+    }
+
+    const isMatch = await this.verifyPassword(password || '', user.adultPassword);
+    if (!isMatch) {
+      throw new Error('Senha de conteudo adulto invalida.');
+    }
+
+    return this.getAdultAccessSummary(user);
+  }
+
+  public static async setAdultPassword(
+    userId: string,
+    newPassword: string,
+    currentPassword?: string,
+    totpCode?: string,
+  ): Promise<AdultAccessSummary> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      throw new Error('Usuario nao encontrado.');
+    }
+
+    const normalizedPassword = (newPassword || '').trim();
+    if (normalizedPassword.length < 4) {
+      throw new Error('A senha do conteudo adulto precisa ter pelo menos 4 caracteres.');
+    }
+
+    if (user.adultPassword) {
+      const currentMatches = await this.verifyPassword(currentPassword || '', user.adultPassword);
+      if (!currentMatches) {
+        throw new Error('Informe a senha atual do conteudo adulto para alterar a protecao.');
+      }
+
+      if (user.adultTotpEnabled && user.adultTotpSecret && !TOTPService.verifyCode(user.adultTotpSecret, totpCode || '')) {
+        throw new Error('Codigo do autenticador invalido.');
+      }
+    }
+
+    const updatedUser = await this.persistAdultSettings(userId, {
+      adultPassword: this.hashPassword(normalizedPassword),
+    });
+
+    if (!updatedUser) {
+      throw new Error('Nao foi possivel atualizar a senha do conteudo adulto.');
+    }
+
+    return this.getAdultAccessSummary(updatedUser);
+  }
+
+  public static async beginAdultTotpSetup(userId: string, adultPassword: string) {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      throw new Error('Usuario nao encontrado.');
+    }
+
+    if (!user.adultPassword) {
+      throw new Error('Configure a senha do conteudo adulto antes de ativar o autenticador.');
+    }
+
+    const passwordMatches = await this.verifyPassword(adultPassword || '', user.adultPassword);
+    if (!passwordMatches) {
+      throw new Error('Senha de conteudo adulto invalida.');
+    }
+
+    if (user.adultTotpEnabled && user.adultTotpSecret) {
+      throw new Error('O autenticador ja esta ativo para este usuario.');
+    }
+
+    const manualEntryKey = TOTPService.generateSecret();
+    const pendingSecret = TOTPService.encryptSecret(manualEntryKey);
+    const issuer = 'Xandeflix Adulto';
+
+    return {
+      issuer,
+      accountName: user.username,
+      manualEntryKey,
+      otpauthUri: TOTPService.buildOtpAuthUri(user.username, manualEntryKey, issuer),
+      pendingSecret,
+      adultAccess: this.getAdultAccessSummary(user),
+    };
+  }
+
+  public static async confirmAdultTotpSetup(
+    userId: string,
+    adultPassword: string,
+    pendingSecret: string,
+    code: string,
+  ): Promise<AdultAccessSummary> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      throw new Error('Usuario nao encontrado.');
+    }
+
+    if (!user.adultPassword) {
+      throw new Error('Configure a senha do conteudo adulto antes de ativar o autenticador.');
+    }
+
+    const passwordMatches = await this.verifyPassword(adultPassword || '', user.adultPassword);
+    if (!passwordMatches) {
+      throw new Error('Senha de conteudo adulto invalida.');
+    }
+
+    if (!pendingSecret) {
+      throw new Error('Sessao de configuracao do autenticador invalida. Inicie novamente.');
+    }
+
+    if (!TOTPService.verifyCode(pendingSecret, code || '')) {
+      throw new Error('Codigo do autenticador invalido.');
+    }
+
+    const updatedUser = await this.persistAdultSettings(userId, {
+      adultTotpSecret: pendingSecret,
+      adultTotpEnabled: true,
+    });
+
+    if (!updatedUser) {
+      throw new Error('Nao foi possivel ativar o autenticador.');
+    }
+
+    return this.getAdultAccessSummary(updatedUser);
+  }
+
+  public static async disableAdultTotp(
+    userId: string,
+    adultPassword: string,
+    code: string,
+  ): Promise<AdultAccessSummary> {
+    const user = await this.getUserById(userId);
+    if (!user) {
+      throw new Error('Usuario nao encontrado.');
+    }
+
+    if (!user.adultPassword) {
+      throw new Error('A protecao de conteudo adulto ainda nao foi configurada.');
+    }
+
+    const passwordMatches = await this.verifyPassword(adultPassword || '', user.adultPassword);
+    if (!passwordMatches) {
+      throw new Error('Senha de conteudo adulto invalida.');
+    }
+
+    if (!user.adultTotpEnabled || !user.adultTotpSecret) {
+      throw new Error('O autenticador nao esta ativo para este usuario.');
+    }
+
+    if (!TOTPService.verifyCode(user.adultTotpSecret, code || '')) {
+      throw new Error('Codigo do autenticador invalido.');
+    }
+
+    const updatedUser = await this.persistAdultSettings(userId, {
+      adultTotpSecret: null,
+      adultTotpEnabled: false,
+    });
+
+    if (!updatedUser) {
+      throw new Error('Nao foi possivel desativar o autenticador.');
+    }
+
+    return this.getAdultAccessSummary(updatedUser);
+  }
+
 
   public static async updateUser(userId: string, data: Partial<UserRecord>): Promise<boolean> {
     this.initialize();
@@ -953,6 +1300,15 @@ export class AdminService {
               }
               if (!mappedUser.mediaOverrides || Object.keys(mappedUser.mediaOverrides).length === 0) {
                 mappedUser.mediaOverrides = localFallback.mediaOverrides;
+              }
+              if (!mappedUser.adultPassword && localFallback.adultPassword) {
+                mappedUser.adultPassword = localFallback.adultPassword;
+              }
+              if (!mappedUser.adultTotpSecret && localFallback.adultTotpSecret) {
+                mappedUser.adultTotpSecret = localFallback.adultTotpSecret;
+              }
+              if (!mappedUser.adultTotpEnabled && localFallback.adultTotpEnabled) {
+                mappedUser.adultTotpEnabled = localFallback.adultTotpEnabled;
               }
             }
           }

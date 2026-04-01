@@ -1,13 +1,19 @@
 import { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { Category } from '../types';
+import { isAdultCategory } from '../lib/adultContent';
 
 export const useMediaFilter = () => {
-  const { allCategories, activeFilter, searchQuery, hiddenCategoryIds, favorites } = useStore();
+  const { allCategories, activeFilter, searchQuery, hiddenCategoryIds, favorites, adultAccess, isAdultUnlocked } = useStore();
 
   const filteredCategories = useMemo(() => {
+    const adultLocked = !adultAccess.enabled || !isAdultUnlocked;
+    const visibleCategories = allCategories.filter(
+      (cat) => !hiddenCategoryIds.includes(cat.id) && (!adultLocked || !isAdultCategory(cat)),
+    );
+
     // 0. Build virtual "Minha Lista" category
-    const favoriteItems = allCategories
+    const favoriteItems = visibleCategories
       .flatMap(cat => cat.items)
       // Filter out duplicates if same item exists in multiple categories
       .filter((item, index, self) => 
@@ -28,7 +34,7 @@ export const useMediaFilter = () => {
     }
 
     // 2. Filter out hidden categories from general result
-    let result = allCategories.filter(cat => !hiddenCategoryIds.includes(cat.id));
+    let result = visibleCategories;
 
     // 3. Dedicated search mode searches across the full visible library
     if (activeFilter === 'search') {
@@ -61,7 +67,7 @@ export const useMediaFilter = () => {
     }
 
     return result;
-  }, [allCategories, activeFilter, searchQuery, hiddenCategoryIds, favorites]);
+  }, [allCategories, activeFilter, searchQuery, hiddenCategoryIds, favorites, adultAccess.enabled, isAdultUnlocked]);
 
   return { filteredCategories };
 };

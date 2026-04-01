@@ -14,6 +14,7 @@ export default function App() {
   const setIsAdminMode = useStore((state) => state.setIsAdminMode);
   const hydrateProfileState = useStore((state) => state.hydrateProfileState);
   const clearSessionState = useStore((state) => state.clearSessionState);
+  const setAdultAccessSettings = useStore((state) => state.setAdultAccessSettings);
 
   useEffect(() => {
     let isMounted = true;
@@ -58,10 +59,12 @@ export default function App() {
           if (session.data.id) localStorage.setItem('xandeflix_user_id', session.data.id);
           else localStorage.removeItem('xandeflix_user_id');
 
+          setAdultAccessSettings(session.data.adultAccess);
           hydrateProfileState(session.data.id);
         } else {
           localStorage.removeItem('xandeflix_playlist_url');
           localStorage.removeItem('xandeflix_user_id');
+          setAdultAccessSettings(null);
           clearSessionState();
         }
 
@@ -85,7 +88,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [clearSessionState, hydrateProfileState, setIsAdminMode]);
+  }, [clearSessionState, hydrateProfileState, setAdultAccessSettings, setIsAdminMode]);
 
   const handleLoginSuccess = (playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => {
     if (playlistUrl) localStorage.setItem('xandeflix_playlist_url', playlistUrl);

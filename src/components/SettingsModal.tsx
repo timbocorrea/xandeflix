@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableHighlight, TextInput, Modal, ScrollView } from 'react-native';
-import { motion } from 'motion/react';
-import { X, Save, RotateCcw, Link, List, Check } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableHighlight, View } from 'react-native';
+import { Check, KeyRound, Link, List, RotateCcw, Save, Shield, Smartphone, X } from 'lucide-react';
 import { Category } from '../types';
+import { useStore } from '../store/useStore';
+import { isAdultCategory } from '../lib/adultContent';
 
 interface SettingsModalProps {
   isVisible: boolean;
@@ -14,21 +15,115 @@ interface SettingsModalProps {
   hiddenCategoryIds: string[];
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ 
-  isVisible, 
-  onClose, 
-  onSave, 
-  currentUrl, 
+type SettingsTab = 'general' | 'categories' | 'adult';
+type PendingTotpSetup = {
+  issuer: string;
+  accountName: string;
+  manualEntryKey: string;
+  otpauthUri: string;
+  pendingSecret: string;
+} | null;
+
+async function readResponseError(response: Response, fallback: string) {
+  try {
+    const data = await response.json();
+    return data?.error || data?.message || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export const SettingsModal: React.FC<SettingsModalProps> = ({
+  isVisible,
+  onClose,
+  onSave,
+  currentUrl,
   onLogout,
   allCategories,
-  hiddenCategoryIds
+  hiddenCategoryIds,
 }) => {
+  const adultAccess = useStore((state) => state.adultAccess);
+  const isAdultUnlocked = useStore((state) => state.isAdultUnlocked);
+  const setAdultAccessSettings = useStore((state) => state.setAdultAccessSettings);
+  const unlockAdultContent = useStore((state) => state.unlockAdultContent);
+  const lockAdultContent = useStore((state) => state.lockAdultContent);
+
   const [localHiddenIds, setLocalHiddenIds] = useState<string[]>(hiddenCategoryIds);
-  const [activeTab, setActiveTab] = useState<'general' | 'categories'>('general');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [createPassword, setCreatePassword] = useState('');
+  const [createPasswordConfirm, setCreatePasswordConfirm] = useState('');
+  const [changeCurrentPassword, setChangeCurrentPassword] = useState('');
+  const [changeNewPassword, setChangeNewPassword] = useState('');
+  const [changeNewPasswordConfirm, setChangeNewPasswordConfirm] = useState('');
+  const [changeTotpCode, setChangeTotpCode] = useState('');
+  const [totpSetupPassword, setTotpSetupPassword] = useState('');
+  const [pendingTotpSetup, setPendingTotpSetup] = useState<PendingTotpSetup>(null);
+  const [totpVerificationCode, setTotpVerificationCode] = useState('');
+  const [disableTotpPassword, setDisableTotpPassword] = useState('');
+  const [disableTotpCode, setDisableTotpCode] = useState('');
+
+  const authToken = typeof window === 'undefined' ? '' : localStorage.getItem('xandeflix_auth_token') || '';
+  const adultCategoryCount = useMemo(
+    () => allCategories.filter((category) => isAdultCategory(category)).length,
+    [allCategories],
+  );
+  const adultLocked = !adultAccess.enabled || !isAdultUnlocked;
 
   useEffect(() => {
     setLocalHiddenIds(hiddenCategoryIds);
   }, [hiddenCategoryIds, isVisible]);
+
+  useEffect(() => {
+    if (!isVisible) {
+      setActiveTab('general');
+      setStatusMessage(null);
+      setErrorMessage(null);
+      setLoadingAction(null);
+      setUnlockPassword('');
+      setCreatePassword('');
+      setCreatePasswordConfirm('');
+      setChangeCurrentPassword('');
+      setChangeNewPassword('');
+      setChangeNewPasswordConfirm('');
+      setChangeTotpCode('');
+      setTotpSetupPassword('');
+      setPendingTotpSetup(null);
+      setTotpVerificationCode('');
+      setDisableTotpPassword('');
+      setDisableTotpCode('');
+    }
+  }, [isVisible]);
+
+  const setFeedback = (message?: string, error?: string) => {
+    setStatusMessage(message || null);
+    setErrorMessage(error || null);
+  };
+
+  const postAdultAction = async (url: string, body: Record<string, unknown>, loadingKey: string) => {
+    setLoadingAction(loadingKey);
+    setFeedback();
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-auth-token': authToken },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readResponseError(response, 'Operacao nao concluida.'));
+      }
+
+      return await response.json();
+    } finally {
+      setLoadingAction(null);
+    }
+  };
 
   const handleSave = () => {
     onSave(currentUrl, localHiddenIds);
@@ -36,114 +131,208 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const toggleLocalCategory = (id: string) => {
-    setLocalHiddenIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
+    setLocalHiddenIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
   };
 
-  return (
-    <Modal
-      visible={isVisible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
+  const handleAdultUnlock = async () => {
+    if (!unlockPassword.trim()) {
+      setFeedback(undefined, 'Informe a senha do conteudo adulto.');
+      return;
+    }
+
+    try {
+      const data = await postAdultAction('/api/user/adult-access/unlock', { password: unlockPassword }, 'unlock');
+      setAdultAccessSettings(data.adultAccess);
+      unlockAdultContent();
+      setUnlockPassword('');
+      setFeedback('Conteudo adulto liberado nesta sessao.');
+    } catch (error: any) {
+      setFeedback(undefined, error.message);
+    }
+  };
+
+  const handleAdultPasswordSave = async () => {
+    const changing = adultAccess.enabled;
+    const nextPassword = (changing ? changeNewPassword : createPassword).trim();
+    const confirmPassword = (changing ? changeNewPasswordConfirm : createPasswordConfirm).trim();
+
+    if (nextPassword.length < 4) {
+      setFeedback(undefined, 'A senha adulta precisa ter pelo menos 4 caracteres.');
+      return;
+    }
+
+    if (nextPassword !== confirmPassword) {
+      setFeedback(undefined, 'A confirmacao da senha nao confere.');
+      return;
+    }
+
+    try {
+      const data = await postAdultAction(
+        '/api/user/adult-access/password',
+        {
+          currentPassword: changing ? changeCurrentPassword : undefined,
+          newPassword: nextPassword,
+          totpCode: adultAccess.totpEnabled ? changeTotpCode : undefined,
+        },
+        'password',
+      );
+      setAdultAccessSettings(data.adultAccess);
+      setCreatePassword('');
+      setCreatePasswordConfirm('');
+      setChangeCurrentPassword('');
+      setChangeNewPassword('');
+      setChangeNewPasswordConfirm('');
+      setChangeTotpCode('');
+      setFeedback(changing ? 'Senha adulta atualizada.' : 'Senha adulta criada.');
+    } catch (error: any) {
+      setFeedback(undefined, error.message);
+    }
+  };
+
+  const handleBeginTotpSetup = async () => {
+    if (!totpSetupPassword.trim()) {
+      setFeedback(undefined, 'Informe a senha adulta atual para ativar o autenticador.');
+      return;
+    }
+
+    try {
+      const data = await postAdultAction(
+        '/api/user/adult-access/totp/setup',
+        { adultPassword: totpSetupPassword },
+        'totp-setup',
+      );
+      setPendingTotpSetup({
+        issuer: data.issuer,
+        accountName: data.accountName,
+        manualEntryKey: data.manualEntryKey,
+        otpauthUri: data.otpauthUri,
+        pendingSecret: data.pendingSecret,
+      });
+      setFeedback('Cadastre a chave no autenticador e confirme o codigo.');
+    } catch (error: any) {
+      setFeedback(undefined, error.message);
+    }
+  };
+
+  const handleConfirmTotpSetup = async () => {
+    if (!pendingTotpSetup || !totpVerificationCode.trim()) {
+      setFeedback(undefined, 'Informe o codigo do autenticador para concluir.');
+      return;
+    }
+
+    try {
+      const data = await postAdultAction(
+        '/api/user/adult-access/totp/verify',
+        {
+          adultPassword: totpSetupPassword,
+          pendingSecret: pendingTotpSetup.pendingSecret,
+          code: totpVerificationCode,
+        },
+        'totp-confirm',
+      );
+      setAdultAccessSettings(data.adultAccess);
+      setPendingTotpSetup(null);
+      setTotpSetupPassword('');
+      setTotpVerificationCode('');
+      setFeedback('Autenticador ativado.');
+    } catch (error: any) {
+      setFeedback(undefined, error.message);
+    }
+  };
+
+  const handleDisableTotp = async () => {
+    if (!disableTotpPassword.trim() || !disableTotpCode.trim()) {
+      setFeedback(undefined, 'Informe a senha adulta e o codigo atual do autenticador.');
+      return;
+    }
+
+    try {
+      const data = await postAdultAction(
+        '/api/user/adult-access/totp/disable',
+        { adultPassword: disableTotpPassword, code: disableTotpCode },
+        'totp-disable',
+      );
+      setAdultAccessSettings(data.adultAccess);
+      setDisableTotpPassword('');
+      setDisableTotpCode('');
+      setFeedback('Autenticador desativado.');
+    } catch (error: any) {
+      setFeedback(undefined, error.message);
+    }
+  };
+
+  const renderTabButton = (tab: SettingsTab, label: string, icon: React.ReactNode) => (
+    <TouchableHighlight
+      onPress={() => setActiveTab(tab)}
+      underlayColor="rgba(255,255,255,0.05)"
+      style={[styles.tab, activeTab === tab && styles.activeTab]}
     >
+      <View style={styles.tabInner}>
+        <span>{icon}</span>
+        <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>{label}</Text>
+      </View>
+    </TouchableHighlight>
+  );
+
+  return (
+    <Modal visible={isVisible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View
-          style={{
-            backgroundColor: '#1a1a1a',
-            width: 700,
-            height: 600,
-            borderRadius: 16,
-            borderColor: 'rgba(255,255,255,0.1)',
-            borderWidth: 1,
-            boxShadow: '0 25px 50px rgba(0,0,0,0.5)' as any,
-            overflow: 'hidden',
-            flexDirection: 'column',
-          }}
-        >
-          {/* Header */}
+        <View style={styles.modal}>
           <View style={styles.header}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <span style={{ marginRight: 12 }}><Link size={24} color="#E50914" /></span>
-              <Text style={styles.title}>Configurações</Text>
+            <View style={styles.headerTitle}>
+              <span style={{ marginRight: 12 }}>
+                <Link size={24} color="#E50914" />
+              </span>
+              <Text style={styles.title}>Configuracoes</Text>
             </View>
-            <TouchableHighlight
-              onPress={onClose}
-              underlayColor="rgba(255,255,255,0.1)"
-              style={styles.closeButton}
-            >
+            <TouchableHighlight onPress={onClose} underlayColor="rgba(255,255,255,0.1)" style={styles.closeButton}>
               <View>
-                <span><X size={24} color="white" /></span>
+                <span>
+                  <X size={22} color="white" />
+                </span>
               </View>
             </TouchableHighlight>
           </View>
 
-          {/* Tabs */}
           <View style={styles.tabs}>
-            <TouchableHighlight
-              onPress={() => setActiveTab('general')}
-              underlayColor="rgba(255,255,255,0.05)"
-              style={[styles.tab, activeTab === 'general' && styles.activeTab]}
-            >
-              <View style={styles.tabInner}>
-                <span><Link size={18} color={activeTab === 'general' ? '#E50914' : 'rgba(255,255,255,0.5)'} /></span>
-                <Text style={[styles.tabText, activeTab === 'general' && styles.activeTabText]}>Sessão</Text>
-              </View>
-            </TouchableHighlight>
-            <TouchableHighlight
-              onPress={() => setActiveTab('categories')}
-              underlayColor="rgba(255,255,255,0.05)"
-              style={[styles.tab, activeTab === 'categories' && styles.activeTab]}
-            >
-              <View style={styles.tabInner}>
-                <span><List size={18} color={activeTab === 'categories' ? '#E50914' : 'rgba(255,255,255,0.5)'} /></span>
-                <Text style={[styles.tabText, activeTab === 'categories' && styles.activeTabText]}>Categorias</Text>
-              </View>
-            </TouchableHighlight>
+            {renderTabButton('general', 'Sessao', <Link size={18} color={activeTab === 'general' ? '#E50914' : 'rgba(255,255,255,0.5)'} />)}
+            {renderTabButton('categories', 'Categorias', <List size={18} color={activeTab === 'categories' ? '#E50914' : 'rgba(255,255,255,0.5)'} />)}
+            {renderTabButton('adult', 'Adulto', <Shield size={18} color={activeTab === 'adult' ? '#E50914' : 'rgba(255,255,255,0.5)'} />)}
           </View>
 
-          {/* Content */}
           <View style={styles.content}>
             {activeTab === 'general' ? (
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Informações do Aplicativo</Text>
-                <View style={{ backgroundColor: 'rgba(255,255,255,0.02)', padding: 20, borderRadius: 12, marginBottom: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }}>
-                  <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', marginBottom: 4 }}>Xandeflix Premium</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 14 }}>Versão 1.2.5 • Estável</Text>
-                  <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.05)', marginVertical: 16 }} />
-                  <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, lineHeight: 20 }}>
-                    Este aplicativo é um reprodutor de mídia para listas IPTV. A gestão de conteúdo é realizada de forma centralizada pelo administrador.
-                  </Text>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <Text style={styles.label}>Aplicativo</Text>
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Xandeflix Premium</Text>
+                  <Text style={styles.cardText}>Sessao local, lista IPTV centralizada e bloqueio adulto por usuario.</Text>
                 </View>
+                <TouchableHighlight
+                  onPress={() => {
+                    if (onLogout) onLogout();
+                    else {
+                      localStorage.removeItem('xandeflix_playlist_url');
+                      window.location.reload();
+                    }
+                  }}
+                  underlayColor="rgba(239,68,68,0.1)"
+                  style={styles.secondaryButton}
+                >
+                  <View style={styles.buttonInner}>
+                    <span style={{ marginRight: 8 }}>
+                      <RotateCcw size={18} color="#ef4444" />
+                    </span>
+                    <Text style={[styles.buttonText, { color: '#ef4444' }]}>Terminar sessao</Text>
+                  </View>
+                </TouchableHighlight>
+              </ScrollView>
+            ) : null}
 
-                <View style={styles.actions}>
-                  <TouchableHighlight
-                    onPress={() => {
-                      if (onLogout) {
-                        onLogout();
-                      } else {
-                        localStorage.removeItem('xandeflix_playlist_url');
-                        window.location.reload();
-                      }
-                    }}
-                    underlayColor="rgba(239, 68, 68, 0.1)"
-                    style={styles.logoutButton}
-                  >
-                    <View style={styles.buttonInner}>
-                      <span style={{ marginRight: 8 }}><RotateCcw size={18} color="#ef4444" /></span>
-                      <Text style={[styles.buttonText, { color: '#ef4444' }]}>Terminar Sessão</Text>
-                    </View>
-                  </TouchableHighlight>
-                </View>
-              </View>
-            ) : (
+            {activeTab === 'categories' ? (
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Gerenciar Visibilidade das Categorias</Text>
-                <Text style={styles.hint}>
-                  Selecione quais categorias você deseja que apareçam na tela principal.
-                </Text>
-                <ScrollView style={styles.categoryList} showsVerticalScrollIndicator={false}>
+                <Text style={styles.label}>Categorias visiveis</Text>
+                <ScrollView style={styles.listBox} showsVerticalScrollIndicator={false}>
                   {allCategories.map((category) => {
                     const isHidden = localHiddenIds.includes(category.id);
                     return (
@@ -151,43 +340,188 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         key={category.id}
                         onPress={() => toggleLocalCategory(category.id)}
                         underlayColor="rgba(255,255,255,0.05)"
-                        style={styles.categoryItem}
+                        style={styles.listItem}
                       >
-                        <View style={styles.categoryItemInner}>
-                          <View style={[
-                            styles.checkbox,
-                            !isHidden && styles.checkboxChecked
-                          ]}>
-                            {!isHidden && <span><Check size={14} color="white" /></span>}
+                        <View style={styles.listItemInner}>
+                          <View style={[styles.checkbox, !isHidden && styles.checkboxChecked]}>
+                            {!isHidden ? <span><Check size={14} color="white" /></span> : null}
                           </View>
                           <View style={{ flex: 1 }}>
-                            <Text style={[styles.categoryName, isHidden && styles.categoryNameHidden]}>
-                              {category.title}
-                            </Text>
-                            <Text style={styles.categoryCount}>
-                              {category.items.length} itens • {category.type === 'live' ? 'TV ao Vivo' : category.type === 'movie' ? 'Filme' : 'Série'}
-                            </Text>
+                            <Text style={[styles.listTitle, isHidden && styles.listTitleHidden]}>{category.title}</Text>
+                            <Text style={styles.listMeta}>{category.items.length} itens</Text>
                           </View>
                         </View>
                       </TouchableHighlight>
                     );
                   })}
                 </ScrollView>
-                
-                <View style={[styles.actions, { marginTop: 24 }]}>
+                <TouchableHighlight onPress={handleSave} underlayColor="#b91c1c" style={styles.primaryButton}>
+                  <View style={styles.buttonInner}>
+                    <span style={{ marginRight: 8 }}>
+                      <Save size={18} color="white" />
+                    </span>
+                    <Text style={styles.buttonText}>Salvar categorias</Text>
+                  </View>
+                </TouchableHighlight>
+              </View>
+            ) : null}
+
+            {activeTab === 'adult' ? (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <Text style={styles.label}>Controle adulto</Text>
+                <Text style={styles.hint}>
+                  {adultCategoryCount > 0
+                    ? `${adultCategoryCount} categorias adultas detectadas.`
+                    : 'Nenhuma categoria adulta detectada nesta lista, mas a protecao pode ser preparada.'}
+                </Text>
+
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>
+                    {adultLocked ? 'Conteudo adulto bloqueado' : 'Conteudo adulto liberado nesta sessao'}
+                  </Text>
+                  <Text style={styles.cardText}>
+                    {adultAccess.enabled
+                      ? adultLocked
+                        ? 'As categorias adultas ficam ocultas ate o desbloqueio manual.'
+                        : 'O desbloqueio vale apenas para esta sessao do navegador.'
+                      : 'Crie uma senha para que o proprio usuario controle o acesso.'}
+                  </Text>
+                  {adultAccess.enabled ? (
+                    isAdultUnlocked ? (
+                      <TouchableHighlight
+                        onPress={() => {
+                          lockAdultContent();
+                          setFeedback('Conteudo adulto bloqueado novamente.');
+                        }}
+                        underlayColor="rgba(239,68,68,0.12)"
+                        style={styles.secondaryButton}
+                      >
+                        <View style={styles.buttonInner}>
+                          <Text style={[styles.buttonText, { color: '#f87171' }]}>Bloquear agora</Text>
+                        </View>
+                      </TouchableHighlight>
+                    ) : (
+                      <>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Senha do conteudo adulto"
+                          placeholderTextColor="rgba(255,255,255,0.25)"
+                          secureTextEntry
+                          value={unlockPassword}
+                          onChangeText={setUnlockPassword}
+                        />
+                        <TouchableHighlight
+                          onPress={handleAdultUnlock}
+                          underlayColor="#b91c1c"
+                          style={[styles.primaryButton, loadingAction === 'unlock' && styles.disabled]}
+                          disabled={loadingAction === 'unlock'}
+                        >
+                          <View style={styles.buttonInner}>
+                            <Text style={styles.buttonText}>Desbloquear</Text>
+                          </View>
+                        </TouchableHighlight>
+                      </>
+                    )
+                  ) : null}
+                </View>
+
+                {statusMessage ? <View style={styles.successBox}><Text style={styles.noticeText}>{statusMessage}</Text></View> : null}
+                {errorMessage ? <View style={styles.errorBox}><Text style={styles.noticeText}>{errorMessage}</Text></View> : null}
+
+                <View style={styles.card}>
+                  <View style={styles.sectionTitleRow}>
+                    <KeyRound size={16} color="#E50914" />
+                    <Text style={styles.sectionTitle}>{adultAccess.enabled ? 'Trocar senha adulta' : 'Criar senha adulta'}</Text>
+                  </View>
+                  {adultAccess.enabled ? (
+                    <>
+                      <TextInput style={styles.input} placeholder="Senha atual" placeholderTextColor="rgba(255,255,255,0.25)" secureTextEntry value={changeCurrentPassword} onChangeText={setChangeCurrentPassword} />
+                      <TextInput style={styles.input} placeholder="Nova senha ou PIN" placeholderTextColor="rgba(255,255,255,0.25)" secureTextEntry value={changeNewPassword} onChangeText={setChangeNewPassword} />
+                      <TextInput style={styles.input} placeholder="Confirmar nova senha" placeholderTextColor="rgba(255,255,255,0.25)" secureTextEntry value={changeNewPasswordConfirm} onChangeText={setChangeNewPasswordConfirm} />
+                      {adultAccess.totpEnabled ? (
+                        <TextInput style={styles.input} placeholder="Codigo do autenticador" placeholderTextColor="rgba(255,255,255,0.25)" value={changeTotpCode} onChangeText={setChangeTotpCode} keyboardType="number-pad" />
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <TextInput style={styles.input} placeholder="Nova senha ou PIN" placeholderTextColor="rgba(255,255,255,0.25)" secureTextEntry value={createPassword} onChangeText={setCreatePassword} />
+                      <TextInput style={styles.input} placeholder="Confirmar senha" placeholderTextColor="rgba(255,255,255,0.25)" secureTextEntry value={createPasswordConfirm} onChangeText={setCreatePasswordConfirm} />
+                    </>
+                  )}
                   <TouchableHighlight
-                    onPress={handleSave}
+                    onPress={handleAdultPasswordSave}
                     underlayColor="#b91c1c"
-                    style={styles.saveButton}
+                    style={[styles.primaryButton, loadingAction === 'password' && styles.disabled]}
+                    disabled={loadingAction === 'password'}
                   >
                     <View style={styles.buttonInner}>
-                      <span style={{ marginRight: 8 }}><Save size={18} color="white" /></span>
-                      <Text style={styles.buttonText}>Confirmar Alterações</Text>
+                      <Text style={styles.buttonText}>{adultAccess.enabled ? 'Atualizar senha' : 'Salvar senha'}</Text>
                     </View>
                   </TouchableHighlight>
                 </View>
-              </View>
-            )}
+
+                <View style={styles.card}>
+                  <View style={styles.sectionTitleRow}>
+                    <Smartphone size={16} color="#E50914" />
+                    <Text style={styles.sectionTitle}>TOTP compativel com Google Authenticator</Text>
+                  </View>
+                  {!adultAccess.enabled ? (
+                    <Text style={styles.cardText}>Crie primeiro a senha adulta.</Text>
+                  ) : adultAccess.totpEnabled ? (
+                    <>
+                      <Text style={styles.cardText}>O autenticador esta ativo. Para desativar, confirme a senha adulta e o codigo atual.</Text>
+                      <TextInput style={styles.input} placeholder="Senha adulta" placeholderTextColor="rgba(255,255,255,0.25)" secureTextEntry value={disableTotpPassword} onChangeText={setDisableTotpPassword} />
+                      <TextInput style={styles.input} placeholder="Codigo atual" placeholderTextColor="rgba(255,255,255,0.25)" value={disableTotpCode} onChangeText={setDisableTotpCode} keyboardType="number-pad" />
+                      <TouchableHighlight
+                        onPress={handleDisableTotp}
+                        underlayColor="rgba(239,68,68,0.12)"
+                        style={[styles.secondaryButton, loadingAction === 'totp-disable' && styles.disabled]}
+                        disabled={loadingAction === 'totp-disable'}
+                      >
+                        <View style={styles.buttonInner}>
+                          <Text style={[styles.buttonText, { color: '#f87171' }]}>Desativar autenticador</Text>
+                        </View>
+                      </TouchableHighlight>
+                    </>
+                  ) : (
+                    <>
+                      <TextInput style={styles.input} placeholder="Senha adulta atual" placeholderTextColor="rgba(255,255,255,0.25)" secureTextEntry value={totpSetupPassword} onChangeText={setTotpSetupPassword} />
+                      {!pendingTotpSetup ? (
+                        <TouchableHighlight
+                          onPress={handleBeginTotpSetup}
+                          underlayColor="#b91c1c"
+                          style={[styles.primaryButton, loadingAction === 'totp-setup' && styles.disabled]}
+                          disabled={loadingAction === 'totp-setup'}
+                        >
+                          <View style={styles.buttonInner}>
+                            <Text style={styles.buttonText}>Iniciar autenticador</Text>
+                          </View>
+                        </TouchableHighlight>
+                      ) : (
+                        <>
+                          <Text style={styles.cardText}>No aplicativo autenticador, use inserir chave de configuracao.</Text>
+                          <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={`Emissor: ${pendingTotpSetup.issuer}`} />
+                          <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={`Conta: ${pendingTotpSetup.accountName}`} />
+                          <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={pendingTotpSetup.manualEntryKey} />
+                          <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={pendingTotpSetup.otpauthUri} />
+                          <TextInput style={styles.input} placeholder="Codigo de 6 digitos" placeholderTextColor="rgba(255,255,255,0.25)" value={totpVerificationCode} onChangeText={setTotpVerificationCode} keyboardType="number-pad" />
+                          <TouchableHighlight
+                            onPress={handleConfirmTotpSetup}
+                            underlayColor="#b91c1c"
+                            style={[styles.primaryButton, loadingAction === 'totp-confirm' && styles.disabled]}
+                            disabled={loadingAction === 'totp-confirm'}
+                          >
+                            <View style={styles.buttonInner}>
+                              <Text style={styles.buttonText}>Confirmar autenticador</Text>
+                            </View>
+                          </TouchableHighlight>
+                        </>
+                      )}
+                    </>
+                  )}
+                </View>
+              </ScrollView>
+            ) : null}
           </View>
         </View>
       </View>
@@ -196,164 +530,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  title: {
-    color: 'white',
-    fontSize: 24,
-    fontWeight: '900',
-    fontFamily: 'Outfit',
-  },
-  closeButton: {
-    padding: 8,
-    borderRadius: 50,
-  },
-  tabs: {
-    flexDirection: 'row',
-    paddingHorizontal: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  tab: {
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  activeTab: {
-    borderBottomColor: '#E50914',
-  },
-  tabInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  tabText: {
-    color: 'rgba(255,255,255,0.5)',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  activeTabText: {
-    color: 'white',
-  },
-  content: {
-    flex: 1,
-    padding: 24,
-  },
-  label: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  input: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    padding: 16,
-    color: 'white',
-    fontSize: 16,
-    marginBottom: 12,
-  },
-  hint: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 13,
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  categoryList: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.02)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
-  categoryItem: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-  },
-  categoryItemInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: '#E50914',
-    borderColor: '#E50914',
-  },
-  categoryName: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  categoryNameHidden: {
-    color: 'rgba(255,255,255,0.3)',
-    textDecorationLine: 'line-through',
-  },
-  categoryCount: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  actions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-    alignItems: 'center',
-    marginTop: 'auto',
-  },
-  logoutButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-    marginRight: 'auto',
-  },
-  resetButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  saveButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: '#E50914',
-  },
-  buttonInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
+  modal: { width: 760, height: 680, backgroundColor: '#161616', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' } as any,
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 24, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  headerTitle: { flexDirection: 'row', alignItems: 'center' },
+  title: { color: 'white', fontSize: 24, fontWeight: '900', fontFamily: 'Outfit' },
+  closeButton: { padding: 8, borderRadius: 50 },
+  tabs: { flexDirection: 'row', paddingHorizontal: 24, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  tab: { paddingVertical: 16, paddingHorizontal: 20, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  activeTab: { borderBottomColor: '#E50914' },
+  tabInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  tabText: { color: 'rgba(255,255,255,0.5)', fontWeight: 'bold', fontSize: 14 },
+  activeTabText: { color: 'white' },
+  content: { flex: 1, padding: 24 },
+  label: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: 'bold', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1 },
+  hint: { color: 'rgba(255,255,255,0.45)', fontSize: 13, lineHeight: 20, marginBottom: 18 },
+  card: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', padding: 16, marginBottom: 16 },
+  cardTitle: { color: 'white', fontSize: 16, fontWeight: '800', marginBottom: 8 },
+  cardText: { color: 'rgba(255,255,255,0.62)', fontSize: 14, lineHeight: 20, marginBottom: 12 },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  sectionTitle: { color: 'white', fontSize: 15, fontWeight: '800' },
+  input: { backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 14, color: 'white', fontSize: 15, marginBottom: 12 },
+  readonlyInput: { color: 'rgba(255,255,255,0.68)' },
+  primaryButton: { alignSelf: 'flex-start', backgroundColor: '#E50914', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 12, marginTop: 4 },
+  secondaryButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.03)', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 12, marginTop: 4 },
+  buttonInner: { flexDirection: 'row', alignItems: 'center' },
+  buttonText: { color: 'white', fontWeight: 'bold', fontSize: 15 },
+  disabled: { opacity: 0.6 },
+  successBox: { backgroundColor: 'rgba(34,197,94,0.08)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.22)', borderRadius: 12, padding: 14, marginBottom: 16 },
+  errorBox: { backgroundColor: 'rgba(239,68,68,0.08)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.22)', borderRadius: 12, padding: 14, marginBottom: 16 },
+  noticeText: { color: 'rgba(255,255,255,0.8)', fontSize: 13, lineHeight: 18 },
+  listBox: { flex: 1, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', marginBottom: 18 },
+  listItem: { padding: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  listItemInner: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+  checkboxChecked: { backgroundColor: '#E50914', borderColor: '#E50914' },
+  listTitle: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  listTitleHidden: { color: 'rgba(255,255,255,0.3)', textDecorationLine: 'line-through' },
+  listMeta: { color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 },
 });

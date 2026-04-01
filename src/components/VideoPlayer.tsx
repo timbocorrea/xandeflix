@@ -52,6 +52,8 @@ interface LiveTelemetrySession {
   flushed: boolean;
 }
 
+type PlaybackStrategy = 'mpegts' | 'hls' | 'native';
+
 const LIVE_STALL_DETECTION_MS = 15000;
 const LIVE_STALL_FORCE_RECOVERY_MS = 25000;
 const LIVE_RECOVERY_COOLDOWN_MS = 10000;
@@ -98,11 +100,34 @@ function extractStreamHost(playerUrl: string): string {
   }
 }
 
-function detectStrategy(proxyUrl: string): 'mpegts' | 'hls' | 'native' {
+function detectStrategy(proxyUrl: string, isLiveStream: boolean): PlaybackStrategy {
   const original = extractOriginalStreamUrl(proxyUrl);
   if (original.includes('.m3u8') || original.includes('output=hls')) return 'hls';
-  if (original.includes('.mp4')) return 'native';
-  return 'mpegts';
+  if (
+    original.includes('/movie/') ||
+    original.includes('/series/') ||
+    /\.(mp4|m4v|mov|mkv|avi|webm|mpg|mpeg|ogv)(?:$|[?#])/i.test(original)
+  ) {
+    return 'native';
+  }
+  if (
+    original.includes('/live/') ||
+    original.includes('output=ts') ||
+    original.includes('output=mpegts') ||
+    /\.ts(?:$|[?#])/i.test(original)
+  ) {
+    return 'mpegts';
+  }
+  return isLiveStream ? 'mpegts' : 'native';
+}
+
+function buildStrategyCandidates(proxyUrl: string, isLiveStream: boolean): PlaybackStrategy[] {
+  const primary = detectStrategy(proxyUrl, isLiveStream);
+  const ordered: PlaybackStrategy[] = isLiveStream
+    ? [primary, 'hls', 'mpegts', 'native']
+    : [primary, 'native', 'hls', 'mpegts'];
+
+  return ordered.filter((candidate, index) => ordered.indexOf(candidate) === index);
 }
 
 export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>(({
@@ -172,7 +197,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const isLiveStream = (internalMedia?.type || mediaType) === 'live';
   const streamUrl = currentQuality?.url || internalUrl;
   const sourceUrl = React.useMemo(() => buildPlayerSourceUrl(streamUrl, reloadNonce), [streamUrl, reloadNonce]);
-  const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(streamUrl));
+  const [strategy, setStrategy] = React.useState<PlaybackStrategy>(() => detectStrategy(streamUrl, isLiveStream));
   const minimizedWidth = layout.isMobile ? 240 : layout.isTablet ? 360 : 480;
   const minimizedHeight = Math.round(minimizedWidth * 9 / 16);
   const minimizedBottom = layout.isMobile ? layout.bottomNavigationHeight + 18 : 30;
@@ -195,10 +220,15 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const hasPlaybackStarted = useRef(false);
   const autoRecoveryCount = useRef(0);
   const lastAutoRecoveryAt = useRef(0);
+  const triedStrategiesRef = useRef<Set<PlaybackStrategy>>(new Set());
   const telemetrySessionRef = useRef<LiveTelemetrySession | null>(null);
   const telemetryKey = React.useMemo(
     () => (isLiveStream ? (internalMedia?.id || internalUrl || '') : ''),
     [internalMedia?.id, internalUrl, isLiveStream],
+  );
+  const strategyCandidates = React.useMemo(
+    () => buildStrategyCandidates(streamUrl, isLiveStream),
+    [isLiveStream, streamUrl],
   );
 
   // Countdown for next episode
@@ -506,12 +536,22 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   }, [url, media, resetLiveRecoveryWatchdog]);
 
   useEffect(() => {
-    setStrategy(detectStrategy(streamUrl));
+    const initialStrategy = detectStrategy(streamUrl, isLiveStream);
+    triedStrategiesRef.current = new Set([initialStrategy]);
+    setStrategy(initialStrategy);
     setReloadNonce(0);
     autoRecoveryCount.current = 0;
     lastAutoRecoveryAt.current = 0;
     resetLiveRecoveryWatchdog();
-  }, [resetLiveRecoveryWatchdog, streamUrl]);
+  }, [isLiveStream, resetLiveRecoveryWatchdog, streamUrl]);
+
+  useEffect(() => {
+    if (reloadNonce <= 0) return;
+
+    const initialStrategy = detectStrategy(streamUrl, isLiveStream);
+    triedStrategiesRef.current = new Set([initialStrategy]);
+    setStrategy(initialStrategy);
+  }, [isLiveStream, reloadNonce, streamUrl]);
 
   useEffect(() => {
     if (!isLiveStream || !telemetryKey) {
@@ -810,6 +850,22 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     return false;
   }, [hasQualities, incrementTelemetryCounter, safeQualityIndex, qualities]);
 
+  const fallbackNextStrategy = React.useCallback(() => {
+    const nextStrategy = strategyCandidates.find(
+      (candidate) => candidate !== strategy && !triedStrategiesRef.current.has(candidate),
+    );
+
+    if (!nextStrategy) {
+      return false;
+    }
+
+    triedStrategiesRef.current.add(nextStrategy);
+    setError(null);
+    setLoading(true);
+    setStrategy(nextStrategy);
+    return true;
+  }, [strategy, strategyCandidates]);
+
   function initMpegTs(video: HTMLVideoElement) {
     if (!mpegts.isSupported()) { setStrategy('hls'); return; }
     const player = mpegts.createPlayer({ type: 'mpegts', isLive: isLiveStream, url: sourceUrl });
@@ -820,6 +876,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     playerRef.current = player;
     player.on(mpegts.Events.ERROR, () => {
       if (fallbackNextQuality()) return;
+      if (fallbackNextStrategy()) return;
       if (isLiveStream) {
         restartPlayback('error');
         return;
@@ -878,7 +935,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     if (res && typeof (res as any).catch === 'function') {
       (res as any).catch(() => {});
     }
-  }, [fallbackNextQuality, isLiveStream, restartPlayback, sourceUrl]);
+  }, [fallbackNextQuality, fallbackNextStrategy, isLiveStream, restartPlayback, sourceUrl]);
 
   const startHlsPlayer = React.useCallback((video: HTMLVideoElement) => {
     const player = videojs(video, {
@@ -891,6 +948,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     setActiveVideoElement(video);
     player.on('error', () => {
       if (fallbackNextQuality()) return;
+      if (fallbackNextStrategy()) return;
       if (isLiveStream) {
         restartPlayback('error');
         return;
@@ -900,7 +958,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     });
     player.on('playing', () => setLoading(false));
     player.on('waiting', () => setLoading(true));
-  }, [fallbackNextQuality, isLiveStream, restartPlayback, sourceUrl]);
+  }, [fallbackNextQuality, fallbackNextStrategy, isLiveStream, restartPlayback, sourceUrl]);
 
   const startNativePlayer = React.useCallback((video: HTMLVideoElement) => {
     video.src = sourceUrl;
@@ -915,6 +973,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     };
     video.onerror = () => {
       if (fallbackNextQuality()) return;
+      if (fallbackNextStrategy()) return;
       if (isLiveStream) {
         restartPlayback('error');
         return;
@@ -922,7 +981,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       setError('Erro no video.');
       setLoading(false);
     };
-  }, [fallbackNextQuality, isLiveStream, restartPlayback, sourceUrl]);
+  }, [fallbackNextQuality, fallbackNextStrategy, isLiveStream, restartPlayback, sourceUrl]);
 
   useEffect(() => {
     destroyPlayer();

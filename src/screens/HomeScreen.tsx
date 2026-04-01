@@ -20,6 +20,7 @@ import { HeroSection } from '../components/HeroSection';
 import { CategoryRow } from '../components/CategoryRow';
 import { VideoPlayer, type VideoPlayerHandle } from '../components/VideoPlayer';
 import LoadingScreen from '../components/LoadingScreen';
+import { isAdultCategory, isAdultMedia } from '../lib/adultContent';
 const MediaDetailsPage = lazy(() =>
   import('../components/MediaDetailsModal').then((module) => ({ default: module.MediaDetailsPage })),
 );
@@ -98,6 +99,8 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const setActiveFilter = useStore((state) => state.setActiveFilter);
   const setSearchQuery = useStore((state) => state.setSearchQuery);
   const setIsAdminMode = useStore((state) => state.setIsAdminMode);
+  const adultAccess = useStore((state) => state.adultAccess);
+  const isAdultUnlocked = useStore((state) => state.isAdultUnlocked);
 
   // Custom Hooks for Data & Filtering
   const { fetchPlaylist, loading, playlistStatus, playlistError, playlistSource } = usePlaylist();
@@ -157,9 +160,18 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     return () => clearTimeout(focusTimer);
   }, [activeFilter]);
 
+  const isAdultLocked = !adultAccess.enabled || !isAdultUnlocked;
+
   const liveChannelCategories = useMemo(
-    () => allCategories.filter((category) => category.type === 'live' && category.items.length > 0),
-    [allCategories]
+    () =>
+      allCategories.filter(
+        (category) =>
+          category.type === 'live' &&
+          category.items.length > 0 &&
+          !hiddenCategoryIds.includes(category.id) &&
+          (!isAdultLocked || !isAdultCategory(category)),
+      ),
+    [allCategories, hiddenCategoryIds, isAdultLocked]
   );
 
   // isBrowsing: player docked at top, content browser below
@@ -296,6 +308,11 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, [resolvePlayableMedia]);
 
   const handleMediaPress = useCallback((media: Media) => {
+    if (isAdultLocked && isAdultMedia(media, allCategories)) {
+      setIsSettingsVisible(true);
+      return;
+    }
+
     if (media.type === 'movie' || media.type === 'series') {
       // Sempre carrega a página de detalhes para filmes e séries
       setDetailsMedia(media);
@@ -304,7 +321,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       // Canais ao vivo tocam direto
       handlePlay(media);
     }
-  }, [handlePlay]);
+  }, [allCategories, handlePlay, isAdultLocked, setIsSettingsVisible]);
 
   const handleToggleMinimize = useCallback(() => {
     // Para Live TV no Desktop, o modo "navegação" é internamente controlado pelo LiveTVGrid.
@@ -341,9 +358,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     
     const useLiveHeroPool = activeFilter === 'live';
     let sourceCats = allCategories.filter((cat) => {
-      const titleUpper = cat.title.toUpperCase();
-      const isAdult = titleUpper.includes('18+') || titleUpper.includes('+18') || titleUpper.includes('ADULT') || titleUpper.includes('XXX') || titleUpper.includes('HOT');
-      if (isAdult) return false;
+      if (isAdultCategory(cat)) return false;
       return useLiveHeroPool ? cat.type === 'live' : cat.type !== 'live';
     });
     
@@ -430,6 +445,25 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     setSelectedMedia(nextMedia);
   }, [heroIndex, heroPool, setSelectedMedia]);
 
+  useEffect(() => {
+    if (!isAdultLocked) {
+      return;
+    }
+
+    if (playingMedia && isAdultMedia(playingMedia, allCategories)) {
+      closeActivePlayer();
+    }
+
+    if (detailsMedia && isAdultMedia(detailsMedia, allCategories)) {
+      setIsDetailsVisible(false);
+      setDetailsMedia(null);
+    }
+
+    if (gridCategory && isAdultCategory(gridCategory)) {
+      setGridCategory(null);
+    }
+  }, [allCategories, closeActivePlayer, detailsMedia, gridCategory, isAdultLocked, playingMedia]);
+
   /**
    * Focus Handlers
    */
@@ -476,8 +510,13 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   }, [setHiddenCategoryIds]);
 
   const handleSeeAll = useCallback((category: Category) => {
+    if (isAdultLocked && isAdultCategory(category)) {
+      setIsSettingsVisible(true);
+      return;
+    }
+
     setGridCategory(category);
-  }, []);
+  }, [isAdultLocked, setIsSettingsVisible]);
 
   const nextEpisode = useMemo(() => {
     if (!playingMedia || playingMedia.type !== 'series' || !playingMedia.seasons?.length || !playingMedia.currentEpisode) {
@@ -921,7 +960,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
           ) : activeFilter === 'live' && layout.isDesktop ? (
             <Suspense fallback={<View style={{ height: 400, flex: 1, backgroundColor: '#111', borderRadius: 20 }} />}>
               <LiveTVGrid 
-                categories={allCategories} 
+                categories={filteredCategories} 
                 layout={layout}
                 onPlayFull={handleMediaPress}
                 isGlobalPlayerActive={!!activeVideoUrl}
