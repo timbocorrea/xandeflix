@@ -10,6 +10,7 @@ export class StreamProxyService {
   public static async proxy(streamUrl: string, req: Request, res: Response, authorizedDomains: Set<string>): Promise<void> {
     try {
       const urlObj = new URL(streamUrl);
+      const urlLower = streamUrl.toLowerCase();
       
       // Log the domain being proxied (stream URLs come from server-parsed playlists, so they are trusted)
       if (!authorizedDomains.has(urlObj.hostname)) {
@@ -84,7 +85,11 @@ export class StreamProxyService {
       res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
       
       // For live streams, we don't want browsers to buffer too much locally
-      const isLive = streamUrl.includes('live') || streamUrl.includes('output=ts') || streamUrl.includes('output=mpegts');
+      const isLive =
+        urlLower.includes('/live/') ||
+        urlLower.includes('output=ts') ||
+        urlLower.includes('output=mpegts') ||
+        urlLower.includes('output=hls');
       if (isLive) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -96,7 +101,6 @@ export class StreamProxyService {
       }
 
       // Detect Content Type overrides
-      const urlLower = streamUrl.toLowerCase();
       const isTS = urlLower.includes('.ts') || urlLower.includes('output=ts') || 
                    urlLower.includes('output=mpegts') ||
                    (response.headers['content-type'] && response.headers['content-type'].includes('video/mp2t'));

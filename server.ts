@@ -14,6 +14,7 @@ import { StreamProxyService } from './server/services/StreamProxyService.js';
 import { CacheManager } from './server/services/CacheManager.js';
 import { AdminService } from './server/services/AdminService.js';
 import { AuthSessionService } from './server/services/AuthSessionService.js';
+import { PlayerTelemetryService } from './server/services/PlayerTelemetryService.js';
 import { TMDBService } from './server/services/TMDBService.js';
 
 // Import Middleware
@@ -521,6 +522,18 @@ app.get('/api/auth/session', async (req, res) => {
   }
 });
 
+app.post('/api/player-telemetry', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const session = AuthSessionService.getSession(getRequestAuthToken(req) || body.authToken);
+    const result = await PlayerTelemetryService.record(body, session);
+    res.status(202).json(result);
+  } catch (e: any) {
+    console.error('[TELEMETRY] Erro ao registrar resumo do player:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /**
  * Admin API Routes
  */
@@ -535,6 +548,17 @@ app.get('/api/admin/users', adminAuthMiddleware, async (req, res) => {
       details: e.details || null,
       hint: 'Verifique se as variáveis VITE_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY estão configuradas na Vercel.'
     });
+  }
+});
+
+app.get('/api/admin/player-telemetry', adminAuthMiddleware, async (req, res) => {
+  try {
+    const hours = Number(req.query.hours || 24);
+    const summary = await PlayerTelemetryService.getSummary(hours);
+    res.json(summary);
+  } catch (e: any) {
+    console.error('[ADMIN-API] Erro ao buscar telemetria do player:', e);
+    res.status(500).json({ error: e.message });
   }
 });
 

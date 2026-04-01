@@ -57,6 +57,39 @@ CREATE TABLE IF NOT EXISTS public.playback_progress (
     UNIQUE(user_id, media_id)
 );
 
+-- Telemetria resumida do player ao vivo.
+-- Importante: esta tabela recebe apenas resumos de sessao/anomalia, nao eventos brutos.
+CREATE TABLE IF NOT EXISTS public.player_telemetry_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.xandeflix_users(id) ON DELETE SET NULL,
+    session_role TEXT DEFAULT 'anonymous',
+    media_id TEXT NOT NULL,
+    media_title TEXT NOT NULL,
+    media_category TEXT,
+    media_type TEXT NOT NULL DEFAULT 'live',
+    stream_host TEXT,
+    strategy TEXT,
+    session_seconds NUMERIC NOT NULL DEFAULT 0,
+    watch_seconds NUMERIC NOT NULL DEFAULT 0,
+    buffer_seconds NUMERIC NOT NULL DEFAULT 0,
+    buffer_event_count INTEGER NOT NULL DEFAULT 0,
+    stall_recovery_count INTEGER NOT NULL DEFAULT 0,
+    error_recovery_count INTEGER NOT NULL DEFAULT 0,
+    ended_recovery_count INTEGER NOT NULL DEFAULT 0,
+    manual_retry_count INTEGER NOT NULL DEFAULT 0,
+    quality_fallback_count INTEGER NOT NULL DEFAULT 0,
+    fatal_error_count INTEGER NOT NULL DEFAULT 0,
+    sampled BOOLEAN NOT NULL DEFAULT false,
+    exit_reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_telemetry_reports_created_at
+    ON public.player_telemetry_reports (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_player_telemetry_reports_media_id
+    ON public.player_telemetry_reports (media_id);
+
 -- Habilitar Seguranca em Nivel de Linha (RLS)
 ALTER TABLE public.xandeflix_users ENABLE ROW LEVEL SECURITY;
 

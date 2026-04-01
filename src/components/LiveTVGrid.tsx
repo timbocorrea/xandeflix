@@ -21,9 +21,7 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
     [categories]
   );
 
-  const [selectedCatId, setSelectedCatId] = useState<string | null>(
-    liveCategories.length > 0 ? liveCategories[0].id : null
-  );
+  const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
   const [previewMedia, setPreviewMedia] = useState<Media | null>(null);

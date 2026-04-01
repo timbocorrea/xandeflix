@@ -7,11 +7,63 @@ const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{children}</span>
 );
 
+type PlayerTelemetryChannel = {
+  key: string;
+  mediaId: string;
+  mediaTitle: string;
+  mediaCategory: string;
+  streamHost: string;
+  sessions: number;
+  sampledReports: number;
+  watchSeconds: number;
+  bufferSeconds: number;
+  bufferEventCount: number;
+  stallRecoveryCount: number;
+  errorRecoveryCount: number;
+  endedRecoveryCount: number;
+  manualRetryCount: number;
+  qualityFallbackCount: number;
+  fatalErrorCount: number;
+  problemScore: number;
+};
+
+type PlayerTelemetrySummary = {
+  enabled: boolean;
+  windowHours: number;
+  storage: 'supabase' | 'unavailable';
+  overview: {
+    reportCount: number;
+    affectedChannels: number;
+    sampledReports: number;
+    watchSeconds: number;
+    bufferSeconds: number;
+    bufferEventCount: number;
+    stallRecoveryCount: number;
+    errorRecoveryCount: number;
+    endedRecoveryCount: number;
+    manualRetryCount: number;
+    qualityFallbackCount: number;
+    fatalErrorCount: number;
+  };
+  channels: PlayerTelemetryChannel[];
+};
+
+function formatSeconds(totalSeconds: number) {
+  if (!totalSeconds || totalSeconds <= 0) return '0m';
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.round((totalSeconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin }) => {
   const { managedUsers, setManagedUsers } = useStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [telemetrySummary, setTelemetrySummary] = useState<PlayerTelemetrySummary | null>(null);
+  const [telemetryLoading, setTelemetryLoading] = useState(true);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const authToken = localStorage.getItem('xandeflix_auth_token') || '';
   
   // New User Form State
@@ -186,7 +238,29 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     }
   }, [setManagedUsers, authToken, readErrorMessage]);
 
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  const fetchTelemetry = useCallback(async () => {
+    setTelemetryLoading(true);
+    setTelemetryError(null);
+    try {
+      const response = await fetch('/api/admin/player-telemetry?hours=24', {
+        headers: { 'x-admin-token': authToken }
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Nao foi possivel carregar a telemetria do player.'));
+      }
+      const data = await response.json();
+      setTelemetrySummary(data);
+    } catch (err: any) {
+      setTelemetryError(err.message);
+    } finally {
+      setTelemetryLoading(false);
+    }
+  }, [authToken, readErrorMessage]);
+
+  useEffect(() => {
+    fetchUsers();
+    fetchTelemetry();
+  }, [fetchTelemetry, fetchUsers]);
 
   const handleToggleStatus = async (userId: string, currentStatus: boolean) => {
     setActionLoading(userId);
@@ -344,6 +418,91 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                 Gerar Acesso
               </button>
             </div>
+          </div>
+
+          <div style={s.card}>
+            <div style={s.cardHeader}>
+              <Icon><FileText size={20} color="#00BBFF" /></Icon>
+              <span style={s.cardTitle}>TELEMETRIA DO PLAYER AO VIVO</span>
+            </div>
+
+            {telemetryError && (
+              <div style={s.errorBanner}>
+                {telemetryError}
+              </div>
+            )}
+
+            {telemetryLoading ? (
+              <div style={{ textAlign: 'center', padding: 32, color: '#00BBFF' }}>Carregando telemetria...</div>
+            ) : telemetrySummary ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <div style={s.telemetryMetaRow}>
+                  <div style={s.telemetryMetaPill}>
+                    Janela analisada: {telemetrySummary.windowHours}h
+                  </div>
+                  <div style={s.telemetryMetaPill}>
+                    Armazenamento: {telemetrySummary.storage === 'supabase' ? 'Supabase' : 'Indisponivel'}
+                  </div>
+                  <div style={s.telemetryMetaPill}>
+                    Captura: {telemetrySummary.enabled ? 'Ativa' : 'Desativada'}
+                  </div>
+                </div>
+
+                <div style={s.telemetryStatsGrid}>
+                  <div style={s.telemetryStatCard}>
+                    <div style={s.telemetryStatValue}>{telemetrySummary.overview.reportCount}</div>
+                    <div style={s.telemetryStatLabel}>Resumos recebidos</div>
+                  </div>
+                  <div style={s.telemetryStatCard}>
+                    <div style={s.telemetryStatValue}>{telemetrySummary.overview.affectedChannels}</div>
+                    <div style={s.telemetryStatLabel}>Canais afetados</div>
+                  </div>
+                  <div style={s.telemetryStatCard}>
+                    <div style={s.telemetryStatValue}>{telemetrySummary.overview.stallRecoveryCount}</div>
+                    <div style={s.telemetryStatLabel}>Auto-recuperacoes por stall</div>
+                  </div>
+                  <div style={s.telemetryStatCard}>
+                    <div style={s.telemetryStatValue}>{telemetrySummary.overview.fatalErrorCount}</div>
+                    <div style={s.telemetryStatLabel}>Falhas sem recuperacao</div>
+                  </div>
+                  <div style={s.telemetryStatCard}>
+                    <div style={s.telemetryStatValue}>{formatSeconds(telemetrySummary.overview.bufferSeconds)}</div>
+                    <div style={s.telemetryStatLabel}>Tempo total em buffering</div>
+                  </div>
+                  <div style={s.telemetryStatCard}>
+                    <div style={s.telemetryStatValue}>{telemetrySummary.overview.qualityFallbackCount}</div>
+                    <div style={s.telemetryStatLabel}>Trocas automaticas de qualidade</div>
+                  </div>
+                </div>
+
+                {telemetrySummary.channels.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={s.telemetryListHeader}>CANAIS MAIS PROBLEMATICOS NAS ULTIMAS {telemetrySummary.windowHours}H</div>
+                    {telemetrySummary.channels.map((channel) => (
+                      <div key={channel.key} style={s.telemetryRow}>
+                        <div style={{ flex: 1.8, minWidth: 0 }}>
+                          <div style={s.telemetryChannelTitle}>{channel.mediaTitle}</div>
+                          <div style={s.telemetryChannelMeta}>
+                            {channel.mediaCategory || 'Sem categoria'}{channel.streamHost ? ` • ${channel.streamHost}` : ''}
+                          </div>
+                        </div>
+                        <div style={s.telemetryMetricGroup}>
+                          <span style={s.telemetryMetricPill}>Sessoes: {channel.sessions}</span>
+                          <span style={s.telemetryMetricPill}>Stalls: {channel.stallRecoveryCount}</span>
+                          <span style={s.telemetryMetricPill}>Erros: {channel.errorRecoveryCount}</span>
+                          <span style={s.telemetryMetricPill}>Fatais: {channel.fatalErrorCount}</span>
+                          <span style={s.telemetryMetricPill}>Buffer: {formatSeconds(channel.bufferSeconds)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={s.telemetryEmptyState}>
+                    Nenhuma anomalia relevante foi registrada na janela atual.
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
 
           {/* Users Table */}
@@ -917,6 +1076,96 @@ const s: Record<string, React.CSSProperties> = {
     color: '#FCA5A5',
     fontSize: 14,
     fontWeight: 600,
+  },
+  telemetryMetaRow: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: 10,
+  },
+  telemetryMetaPill: {
+    padding: '8px 12px',
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,187,255,0.08)',
+    border: '1px solid rgba(0,187,255,0.18)',
+    color: '#7DD3FC',
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  telemetryStatsGrid: {
+    display: 'grid',
+    gridTemplateColumns: typeof window !== 'undefined' && window.innerWidth < 768 ? '1fr 1fr' : 'repeat(3, minmax(0, 1fr))',
+    gap: 12,
+  },
+  telemetryStatCard: {
+    padding: '16px 14px',
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    border: '1px solid rgba(255,255,255,0.05)',
+  },
+  telemetryStatValue: {
+    fontSize: 26,
+    fontWeight: 900,
+    color: 'white',
+    lineHeight: '28px',
+    marginBottom: 6,
+  },
+  telemetryStatLabel: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: 700,
+  },
+  telemetryListHeader: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: 1,
+  },
+  telemetryRow: {
+    display: 'flex',
+    flexDirection: typeof window !== 'undefined' && window.innerWidth < 768 ? 'column' : 'row',
+    gap: 12,
+    alignItems: typeof window !== 'undefined' && window.innerWidth < 768 ? 'flex-start' : 'center',
+    padding: '14px 16px',
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    border: '1px solid rgba(255,255,255,0.05)',
+  },
+  telemetryChannelTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  telemetryChannelMeta: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  telemetryMetricGroup: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: 8,
+    justifyContent: typeof window !== 'undefined' && window.innerWidth < 768 ? 'flex-start' : 'flex-end',
+  },
+  telemetryMetricPill: {
+    padding: '6px 10px',
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  telemetryEmptyState: {
+    padding: '24px 16px',
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    border: '1px dashed rgba(255,255,255,0.08)',
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 14,
+    textAlign: 'center' as const,
   },
   // Responsive: single column on mobile, 3-column on desktop
   formGrid: {

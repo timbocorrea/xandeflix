@@ -42,7 +42,7 @@ export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
         return current;
       }
 
-      return liveCategories[0].id;
+      return null;
     });
   }, [liveCategories]);
 
@@ -72,7 +72,7 @@ export const LiveTVMobileBrowser: React.FC<LiveTVMobileBrowserProps> = ({
         return current;
       }
 
-      return filteredCategories[0].id;
+      return null;
     });
   }, [filteredCategories]);
 

@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Media, Category } from '../types';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
+import { sendPlayerTelemetryReport, type PlayerTelemetryExitReason } from '../lib/playerTelemetry';
 
 interface VideoPlayerProps {
   url: string;
@@ -28,8 +29,77 @@ export interface VideoPlayerHandle {
   enterPictureInPicture: () => Promise<boolean>;
 }
 
+interface LiveTelemetrySession {
+  key: string;
+  mediaId: string;
+  mediaTitle: string;
+  mediaCategory: string;
+  mediaType: string;
+  streamHost: string;
+  startedAt: number;
+  sampled: boolean;
+  activePlayingSince: number | null;
+  activeBufferingSince: number | null;
+  watchMs: number;
+  bufferMs: number;
+  bufferEventCount: number;
+  stallRecoveryCount: number;
+  errorRecoveryCount: number;
+  endedRecoveryCount: number;
+  manualRetryCount: number;
+  qualityFallbackCount: number;
+  fatalErrorCount: number;
+  flushed: boolean;
+}
+
+const LIVE_STALL_DETECTION_MS = 15000;
+const LIVE_STALL_FORCE_RECOVERY_MS = 25000;
+const LIVE_RECOVERY_COOLDOWN_MS = 10000;
+const LIVE_STABLE_PLAYBACK_RESET_MS = 30000;
+const LIVE_MAX_AUTO_RECOVERIES = 3;
+const LIVE_TELEMETRY_SAMPLE_RATE = 0.05;
+
+function extractOriginalStreamUrl(playerUrl: string): string {
+  if (!playerUrl) return '';
+  if (!playerUrl.includes('/api/stream')) return playerUrl.toLowerCase();
+
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsed = new URL(playerUrl, base);
+    return (parsed.searchParams.get('url') || '').toLowerCase();
+  } catch {
+    return decodeURIComponent(playerUrl.split('url=')[1] || '').toLowerCase();
+  }
+}
+
+function buildPlayerSourceUrl(playerUrl: string, reloadToken: number): string {
+  if (!playerUrl || !playerUrl.includes('/api/stream')) return playerUrl;
+
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsed = new URL(playerUrl, base);
+    if (reloadToken > 0) parsed.searchParams.set('_xr', String(reloadToken));
+    else parsed.searchParams.delete('_xr');
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    if (reloadToken <= 0) return playerUrl;
+    return `${playerUrl}${playerUrl.includes('?') ? '&' : '?'}_xr=${reloadToken}`;
+  }
+}
+
+function extractStreamHost(playerUrl: string): string {
+  const original = extractOriginalStreamUrl(playerUrl);
+  if (!original) return '';
+
+  try {
+    return new URL(original).host.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 function detectStrategy(proxyUrl: string): 'mpegts' | 'hls' | 'native' {
-  const original = decodeURIComponent(proxyUrl.split('url=')[1] || '').toLowerCase();
+  const original = extractOriginalStreamUrl(proxyUrl);
   if (original.includes('.m3u8') || original.includes('output=hls')) return 'hls';
   if (original.includes('.mp4')) return 'native';
   return 'mpegts';
@@ -76,6 +146,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   // Internal Source Override (for channel switching)
   const [internalUrl, setInternalUrl] = React.useState(url);
   const [internalMedia, setInternalMedia] = React.useState<Media | null>(media);
+  const [reloadNonce, setReloadNonce] = React.useState(0);
 
   // Sidebar State
   const { allCategories } = useStore();
@@ -98,7 +169,9 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const safeQualityIndex = qualities.length > 0 ? Math.min(activeQualityIndex, qualities.length - 1) : 0;
   const currentQuality = qualities[safeQualityIndex] || null;
   const hasQualities = qualities.length > 1;
+  const isLiveStream = (internalMedia?.type || mediaType) === 'live';
   const streamUrl = currentQuality?.url || internalUrl;
+  const sourceUrl = React.useMemo(() => buildPlayerSourceUrl(streamUrl, reloadNonce), [streamUrl, reloadNonce]);
   const [strategy, setStrategy] = React.useState<'mpegts' | 'hls' | 'native'>(() => detectStrategy(streamUrl));
   const minimizedWidth = layout.isMobile ? 240 : layout.isTablet ? 360 : 480;
   const minimizedHeight = Math.round(minimizedWidth * 9 / 16);
@@ -117,6 +190,16 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const initialSeekDone = useRef(false);
   const lastSavedTime = useRef(0);
   const lastSyncedTime = useRef(0);
+  const lastPlaybackProgressAt = useRef(Date.now());
+  const lastObservedCurrentTime = useRef(0);
+  const hasPlaybackStarted = useRef(false);
+  const autoRecoveryCount = useRef(0);
+  const lastAutoRecoveryAt = useRef(0);
+  const telemetrySessionRef = useRef<LiveTelemetrySession | null>(null);
+  const telemetryKey = React.useMemo(
+    () => (isLiveStream ? (internalMedia?.id || internalUrl || '') : ''),
+    [internalMedia?.id, internalUrl, isLiveStream],
+  );
 
   // Countdown for next episode
   const [showCountdown, setShowCountdown] = React.useState(false);
@@ -165,6 +248,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     const idx = cat.items.findIndex(i => i.id === internalMedia?.id);
     const nIdx = (idx + dir + cat.items.length) % cat.items.length;
     const next = cat.items[nIdx];
+    flushTelemetrySession('channel_switch');
     setInternalUrl(next.videoUrl);
     setInternalMedia(next);
     setLoading(true);
@@ -187,6 +271,155 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     else el.requestFullscreen?.();
   };
 
+  const createTelemetrySession = React.useCallback((): LiveTelemetrySession | null => {
+    if (!isLiveStream || !telemetryKey) return null;
+
+    return {
+      key: telemetryKey,
+      mediaId: internalMedia?.id || telemetryKey,
+      mediaTitle: internalMedia?.title || 'Canal desconhecido',
+      mediaCategory: internalMedia?.category || '',
+      mediaType: internalMedia?.type || mediaType,
+      streamHost: extractStreamHost(streamUrl),
+      startedAt: Date.now(),
+      sampled: Math.random() < LIVE_TELEMETRY_SAMPLE_RATE,
+      activePlayingSince: null,
+      activeBufferingSince: null,
+      watchMs: 0,
+      bufferMs: 0,
+      bufferEventCount: 0,
+      stallRecoveryCount: 0,
+      errorRecoveryCount: 0,
+      endedRecoveryCount: 0,
+      manualRetryCount: 0,
+      qualityFallbackCount: 0,
+      fatalErrorCount: 0,
+      flushed: false,
+    };
+  }, [internalMedia?.category, internalMedia?.id, internalMedia?.title, internalMedia?.type, isLiveStream, mediaType, streamUrl, telemetryKey]);
+
+  const ensureTelemetrySession = React.useCallback(() => {
+    if (!telemetrySessionRef.current) {
+      telemetrySessionRef.current = createTelemetrySession();
+    }
+    return telemetrySessionRef.current;
+  }, [createTelemetrySession]);
+
+  const finalizeTelemetryPhases = React.useCallback(() => {
+    const session = telemetrySessionRef.current;
+    if (!session) return;
+
+    const now = Date.now();
+
+    if (session.activePlayingSince) {
+      session.watchMs += now - session.activePlayingSince;
+      session.activePlayingSince = null;
+    }
+
+    if (session.activeBufferingSince) {
+      session.bufferMs += now - session.activeBufferingSince;
+      session.activeBufferingSince = null;
+    }
+  }, []);
+
+  const markTelemetryPlaying = React.useCallback(() => {
+    const session = ensureTelemetrySession();
+    if (!session) return;
+
+    const now = Date.now();
+
+    if (session.activeBufferingSince) {
+      session.bufferMs += now - session.activeBufferingSince;
+      session.activeBufferingSince = null;
+    }
+
+    if (!session.activePlayingSince) {
+      session.activePlayingSince = now;
+    }
+  }, [ensureTelemetrySession]);
+
+  const markTelemetryBuffering = React.useCallback(() => {
+    const session = ensureTelemetrySession();
+    if (!session) return;
+
+    const now = Date.now();
+
+    if (session.activePlayingSince) {
+      session.watchMs += now - session.activePlayingSince;
+      session.activePlayingSince = null;
+    }
+
+    if (!session.activeBufferingSince) {
+      session.activeBufferingSince = now;
+      session.bufferEventCount += 1;
+    }
+  }, [ensureTelemetrySession]);
+
+  const incrementTelemetryCounter = React.useCallback((
+    field:
+      | 'stallRecoveryCount'
+      | 'errorRecoveryCount'
+      | 'endedRecoveryCount'
+      | 'manualRetryCount'
+      | 'qualityFallbackCount'
+      | 'fatalErrorCount',
+  ) => {
+    const session = ensureTelemetrySession();
+    if (!session) return;
+    session[field] += 1;
+  }, [ensureTelemetrySession]);
+
+  const flushTelemetrySession = React.useCallback((exitReason: PlayerTelemetryExitReason) => {
+    const session = telemetrySessionRef.current;
+    if (!session || session.flushed) return;
+
+    finalizeTelemetryPhases();
+
+    const sessionSeconds = Math.max(0, Math.round((Date.now() - session.startedAt) / 1000));
+    const watchSeconds = Math.max(0, Math.round(session.watchMs / 1000));
+    const bufferSeconds = Math.max(0, Math.round(session.bufferMs / 1000));
+    const hasAnomaly =
+      session.bufferEventCount > 0 ||
+      session.stallRecoveryCount > 0 ||
+      session.errorRecoveryCount > 0 ||
+      session.endedRecoveryCount > 0 ||
+      session.manualRetryCount > 0 ||
+      session.qualityFallbackCount > 0 ||
+      session.fatalErrorCount > 0;
+
+    session.flushed = true;
+
+    if (!session.sampled && !hasAnomaly) {
+      return;
+    }
+
+    sendPlayerTelemetryReport({
+      authToken,
+      mediaId: session.mediaId,
+      mediaTitle: session.mediaTitle,
+      mediaCategory: session.mediaCategory,
+      mediaType: session.mediaType,
+      streamHost: session.streamHost,
+      strategy,
+      sessionSeconds,
+      watchSeconds,
+      bufferSeconds,
+      bufferEventCount: session.bufferEventCount,
+      stallRecoveryCount: session.stallRecoveryCount,
+      errorRecoveryCount: session.errorRecoveryCount,
+      endedRecoveryCount: session.endedRecoveryCount,
+      manualRetryCount: session.manualRetryCount,
+      qualityFallbackCount: session.qualityFallbackCount,
+      fatalErrorCount: session.fatalErrorCount,
+      sampled: session.sampled,
+      exitReason,
+    });
+  }, [authToken, finalizeTelemetryPhases, strategy]);
+
+  const resetTelemetrySession = React.useCallback(() => {
+    telemetrySessionRef.current = createTelemetrySession();
+  }, [createTelemetrySession]);
+
   const resetIdleTimer = React.useCallback(() => {
     setIsIdle(false);
     if (idleTimer.current) clearTimeout(idleTimer.current);
@@ -198,13 +431,112 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
 
   const shouldHideControls = isIdle && !isPreview && !isSidebarOpen && !showQualityMenu && !loading && !error;
 
+  const resetLiveRecoveryWatchdog = React.useCallback(() => {
+    lastPlaybackProgressAt.current = Date.now();
+    lastObservedCurrentTime.current = 0;
+    hasPlaybackStarted.current = false;
+  }, []);
+
+  const markPlaybackProgress = React.useCallback((playedTime?: number) => {
+    const now = Date.now();
+    lastPlaybackProgressAt.current = now;
+
+    if (typeof playedTime === 'number' && Number.isFinite(playedTime)) {
+      lastObservedCurrentTime.current = playedTime;
+    }
+
+    hasPlaybackStarted.current = true;
+
+    if (lastAutoRecoveryAt.current > 0 && now - lastAutoRecoveryAt.current >= LIVE_STABLE_PLAYBACK_RESET_MS) {
+      autoRecoveryCount.current = 0;
+      lastAutoRecoveryAt.current = 0;
+    }
+  }, []);
+
+  const restartPlayback = React.useCallback((reason: 'manual' | 'stall' | 'ended' | 'error' = 'manual') => {
+    if (reason !== 'manual' && !isLiveStream) return;
+
+    const now = Date.now();
+
+    if (reason !== 'manual') {
+      if (reason === 'stall') incrementTelemetryCounter('stallRecoveryCount');
+      if (reason === 'error') incrementTelemetryCounter('errorRecoveryCount');
+      if (reason === 'ended') incrementTelemetryCounter('endedRecoveryCount');
+
+      if (now - lastAutoRecoveryAt.current < LIVE_RECOVERY_COOLDOWN_MS) {
+        return;
+      }
+
+      autoRecoveryCount.current += 1;
+      lastAutoRecoveryAt.current = now;
+
+      if (autoRecoveryCount.current > LIVE_MAX_AUTO_RECOVERIES) {
+        incrementTelemetryCounter('fatalErrorCount');
+        flushTelemetrySession('fatal_error');
+        resetTelemetrySession();
+        setLoading(false);
+        setError('A transmissão parou repetidamente. Use "Tentar Novamente" para reiniciar o canal.');
+        return;
+      }
+    } else {
+      incrementTelemetryCounter('manualRetryCount');
+      flushTelemetrySession('manual_retry');
+      resetTelemetrySession();
+      autoRecoveryCount.current = 0;
+      lastAutoRecoveryAt.current = 0;
+    }
+
+    finalizeTelemetryPhases();
+    resetLiveRecoveryWatchdog();
+    setError(null);
+    setLoading(true);
+    setReloadNonce((prev) => prev + 1);
+  }, [finalizeTelemetryPhases, flushTelemetrySession, incrementTelemetryCounter, isLiveStream, resetLiveRecoveryWatchdog, resetTelemetrySession]);
+
   // ── Effects ──
 
   // Sync internal state when source props change
   useEffect(() => {
     setInternalUrl(url);
     setInternalMedia(media);
-  }, [url, media]);
+    setReloadNonce(0);
+    autoRecoveryCount.current = 0;
+    lastAutoRecoveryAt.current = 0;
+    resetLiveRecoveryWatchdog();
+  }, [url, media, resetLiveRecoveryWatchdog]);
+
+  useEffect(() => {
+    setStrategy(detectStrategy(streamUrl));
+    setReloadNonce(0);
+    autoRecoveryCount.current = 0;
+    lastAutoRecoveryAt.current = 0;
+    resetLiveRecoveryWatchdog();
+  }, [resetLiveRecoveryWatchdog, streamUrl]);
+
+  useEffect(() => {
+    if (!isLiveStream || !telemetryKey) {
+      telemetrySessionRef.current = null;
+      return;
+    }
+
+    resetTelemetrySession();
+
+    return () => {
+      flushTelemetrySession('unmount');
+      telemetrySessionRef.current = null;
+    };
+  }, [flushTelemetrySession, isLiveStream, resetTelemetrySession, telemetryKey]);
+
+  useEffect(() => {
+    if (!isLiveStream || !telemetryKey) return;
+
+    const handlePageHide = () => {
+      flushTelemetrySession('close');
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, [flushTelemetrySession, isLiveStream, telemetryKey]);
 
   // Handle sidebar categories
   useEffect(() => {
@@ -261,10 +593,41 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   useEffect(() => {
     if (!activeVideoElement) return;
     const v = activeVideoElement;
-    const upPlay = () => setIsPlaying(!v.paused);
-    const upProg = () => { setCurrentTime(v.currentTime); setDuration(v.duration); };
+    const upPlay = () => {
+      const playing = !v.paused && !v.ended;
+      setIsPlaying(playing);
+
+      if (playing) {
+        setLoading(false);
+        markPlaybackProgress(v.currentTime);
+        markTelemetryPlaying();
+      } else {
+        finalizeTelemetryPhases();
+      }
+    };
+    const upProg = () => {
+      setCurrentTime(v.currentTime);
+      setDuration(v.duration);
+
+      if (!v.paused && !v.ended) {
+        setLoading(false);
+        markPlaybackProgress(v.currentTime);
+        markTelemetryPlaying();
+      }
+    };
     const upVol = () => { setVolume(v.volume); setIsMuted(v.muted); };
     const upPiP = () => syncPictureInPictureState(v);
+    const onBuffering = () => {
+      if (!v.paused && !v.ended) {
+        setLoading(true);
+        markTelemetryBuffering();
+      }
+    };
+    const onEnded = () => {
+      setIsPlaying(false);
+      finalizeTelemetryPhases();
+      if (isLiveStream) restartPlayback('ended');
+    };
 
     v.addEventListener('play', upPlay);
     v.addEventListener('pause', upPlay);
@@ -272,6 +635,10 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     v.addEventListener('timeupdate', upProg);
     v.addEventListener('durationchange', upProg);
     v.addEventListener('volumechange', upVol);
+    v.addEventListener('waiting', onBuffering);
+    v.addEventListener('stalled', onBuffering);
+    v.addEventListener('emptied', onBuffering);
+    v.addEventListener('ended', onEnded);
     v.addEventListener('enterpictureinpicture', upPiP);
     v.addEventListener('leavepictureinpicture', upPiP);
     v.addEventListener('webkitpresentationmodechanged', upPiP);
@@ -286,12 +653,16 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       v.removeEventListener('timeupdate', upProg);
       v.removeEventListener('durationchange', upProg);
       v.removeEventListener('volumechange', upVol);
+      v.removeEventListener('waiting', onBuffering);
+      v.removeEventListener('stalled', onBuffering);
+      v.removeEventListener('emptied', onBuffering);
+      v.removeEventListener('ended', onEnded);
       v.removeEventListener('enterpictureinpicture', upPiP);
       v.removeEventListener('leavepictureinpicture', upPiP);
       v.removeEventListener('webkitpresentationmodechanged', upPiP);
       v.removeEventListener('loadedmetadata', upPiP);
     };
-  }, [activeVideoElement, syncPictureInPictureState]);
+  }, [activeVideoElement, finalizeTelemetryPhases, isLiveStream, markPlaybackProgress, markTelemetryBuffering, markTelemetryPlaying, restartPlayback, syncPictureInPictureState]);
 
   useEffect(() => {
     onPictureInPictureChange?.(isInPictureInPicture);
@@ -351,6 +722,36 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     return () => clearInterval(interval);
   }, [activeVideoElement, progressId, userId, setPlaybackProgress, syncProgressToSupabase, onPlayNextEpisode]);
 
+  useEffect(() => {
+    if (!activeVideoElement || !isLiveStream || error) return;
+
+    const video = activeVideoElement;
+    const interval = window.setInterval(() => {
+      if (video.paused || video.seeking || video.ended) return;
+      if (document.hidden && !isInPictureInPicture) return;
+
+      const now = Date.now();
+      const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+
+      if (Math.abs(currentTime - lastObservedCurrentTime.current) > 0.01) {
+        markPlaybackProgress(currentTime);
+        return;
+      }
+
+      if (!hasPlaybackStarted.current) return;
+
+      const stalledFor = now - lastPlaybackProgressAt.current;
+      const seemsStalled = stalledFor >= LIVE_STALL_DETECTION_MS && video.readyState < 3;
+      const forceRecovery = stalledFor >= LIVE_STALL_FORCE_RECOVERY_MS;
+
+      if (seemsStalled || forceRecovery) {
+        restartPlayback('stall');
+      }
+    }, 3000);
+
+    return () => window.clearInterval(interval);
+  }, [activeVideoElement, error, isInPictureInPicture, isLiveStream, markPlaybackProgress, restartPlayback]);
+
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -367,7 +768,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
         case 'm': e.preventDefault(); toggleMute(); break;
         case 'l': e.preventDefault(); skipTime(10); break;
         case 'j': e.preventDefault(); skipTime(-10); break;
-        case 'escape': e.preventDefault(); onClose(); break;
+        case 'escape': e.preventDefault(); flushTelemetrySession('close'); onClose(); break;
         case 'arrowright': e.preventDefault(); internalMedia?.type === 'live' ? goToAdjacentChannel(1) : skipTime(10); break;
         case 'arrowleft': e.preventDefault(); internalMedia?.type === 'live' ? goToAdjacentChannel(-1) : skipTime(-10); break;
       }
@@ -380,11 +781,18 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   function destroyPlayer() {
     setActiveVideoElement(null);
     if (playerRef.current) {
+      if (playerRef.current.pause) playerRef.current.pause();
+      if (playerRef.current.unload) playerRef.current.unload();
+      if (playerRef.current.detachMediaElement) playerRef.current.detachMediaElement();
       if (playerRef.current.dispose) playerRef.current.dispose();
       else if (playerRef.current.destroy) playerRef.current.destroy();
       playerRef.current = null;
     }
     if (videoRef.current) {
+      videoRef.current.onplaying = null;
+      videoRef.current.onerror = null;
+      videoRef.current.onwaiting = null;
+      videoRef.current.onended = null;
       videoRef.current.pause();
       videoRef.current.removeAttribute('src');
       videoRef.current.load();
@@ -393,30 +801,38 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
 
   const fallbackNextQuality = React.useCallback(() => {
     if (hasQualities && safeQualityIndex < qualities.length - 1) {
+      incrementTelemetryCounter('qualityFallbackCount');
       setActiveQualityIndex(prev => prev + 1);
       setError('Sinal instável. Alternando qualidade...');
       setTimeout(() => setError(null), 3000);
       return true;
     }
     return false;
-  }, [hasQualities, safeQualityIndex, qualities]);
+  }, [hasQualities, incrementTelemetryCounter, safeQualityIndex, qualities]);
 
   function initMpegTs(video: HTMLVideoElement) {
     if (!mpegts.isSupported()) { setStrategy('hls'); return; }
-    const player = mpegts.createPlayer({ type: 'mpegts', isLive: internalMedia?.type === 'live', url: streamUrl });
+    const player = mpegts.createPlayer({ type: 'mpegts', isLive: isLiveStream, url: sourceUrl });
     player.attachMediaElement(video);
     player.load();
     video.controls = false;
     setActiveVideoElement(video);
     playerRef.current = player;
-    player.on(mpegts.Events.ERROR, () => { if (!fallbackNextQuality()) { setError('Erro no canal.'); setLoading(false); } });
+    player.on(mpegts.Events.ERROR, () => {
+      if (fallbackNextQuality()) return;
+      if (isLiveStream) {
+        restartPlayback('error');
+        return;
+      }
+      setError('Erro no canal.');
+      setLoading(false);
+    });
     const res = player.play();
     if (res && typeof (res as any).catch === 'function') (res as any).catch(() => {});
-    setLoading(false);
   }
 
   function initHls(video: HTMLVideoElement) {
-    const player = videojs(video, { autoplay: true, controls: false, sources: [{ src: streamUrl, type: 'application/x-mpegURL' }] });
+    const player = videojs(video, { autoplay: true, controls: false, sources: [{ src: sourceUrl, type: 'application/x-mpegURL' }] });
     playerRef.current = player;
     setActiveVideoElement(video);
     player.on('error', () => { if (!fallbackNextQuality()) setError('Erro na transmissão.'); });
@@ -436,17 +852,90 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     setLoading(false);
   }
 
+  const startMpegTsPlayer = React.useCallback((video: HTMLVideoElement) => {
+    if (!mpegts.isSupported()) {
+      setStrategy('hls');
+      return;
+    }
+
+    const player = mpegts.createPlayer({ type: 'mpegts', isLive: isLiveStream, url: sourceUrl });
+    player.attachMediaElement(video);
+    player.load();
+    video.controls = false;
+    setActiveVideoElement(video);
+    playerRef.current = player;
+    player.on(mpegts.Events.ERROR, () => {
+      if (fallbackNextQuality()) return;
+      if (isLiveStream) {
+        restartPlayback('error');
+        return;
+      }
+      setError('Erro no canal.');
+      setLoading(false);
+    });
+
+    const res = player.play();
+    if (res && typeof (res as any).catch === 'function') {
+      (res as any).catch(() => {});
+    }
+  }, [fallbackNextQuality, isLiveStream, restartPlayback, sourceUrl]);
+
+  const startHlsPlayer = React.useCallback((video: HTMLVideoElement) => {
+    const player = videojs(video, {
+      autoplay: true,
+      controls: false,
+      sources: [{ src: sourceUrl, type: 'application/x-mpegURL' }],
+    });
+
+    playerRef.current = player;
+    setActiveVideoElement(video);
+    player.on('error', () => {
+      if (fallbackNextQuality()) return;
+      if (isLiveStream) {
+        restartPlayback('error');
+        return;
+      }
+      setError('Erro na transmissao.');
+      setLoading(false);
+    });
+    player.on('playing', () => setLoading(false));
+    player.on('waiting', () => setLoading(true));
+  }, [fallbackNextQuality, isLiveStream, restartPlayback, sourceUrl]);
+
+  const startNativePlayer = React.useCallback((video: HTMLVideoElement) => {
+    video.src = sourceUrl;
+    video.controls = false;
+    video.autoplay = true;
+    setActiveVideoElement(video);
+    video.play().catch(() => {});
+    video.onplaying = () => setLoading(false);
+    video.onwaiting = () => setLoading(true);
+    video.onended = () => {
+      if (isLiveStream) restartPlayback('ended');
+    };
+    video.onerror = () => {
+      if (fallbackNextQuality()) return;
+      if (isLiveStream) {
+        restartPlayback('error');
+        return;
+      }
+      setError('Erro no video.');
+      setLoading(false);
+    };
+  }, [fallbackNextQuality, isLiveStream, restartPlayback, sourceUrl]);
+
   useEffect(() => {
     destroyPlayer();
+    resetLiveRecoveryWatchdog();
     setLoading(true);
     setError(null);
     const video = videoRef.current;
     if (!video) return;
-    if (strategy === 'mpegts') initMpegTs(video);
-    else if (strategy === 'hls') initHls(video);
-    else initNative(video);
+    if (strategy === 'mpegts') startMpegTsPlayer(video);
+    else if (strategy === 'hls') startHlsPlayer(video);
+    else startNativePlayer(video);
     return () => destroyPlayer();
-  }, [streamUrl, strategy]);
+  }, [resetLiveRecoveryWatchdog, sourceUrl, startHlsPlayer, startMpegTsPlayer, startNativePlayer, strategy]);
 
   useImperativeHandle(ref, () => ({ enterPictureInPicture }), [enterPictureInPicture]);
 
@@ -481,7 +970,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
             {/* Header */}
             <div className="absolute top-0 inset-x-0 p-8 flex justify-between items-start">
                <div className="flex items-center gap-4">
-                  <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="p-3 hover:bg-white/10 rounded-full transition-colors mr-2">
+                  <button onClick={(e) => { e.stopPropagation(); flushTelemetrySession('close'); onClose(); }} className="p-3 hover:bg-white/10 rounded-full transition-colors mr-2">
                     <ArrowLeft className="w-6 h-6 text-white" />
                   </button>
                   <div className="flex flex-col">
@@ -495,7 +984,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
                       <Layout size={24} color="white" />
                     </button>
                   )}
-                  <button onClick={onClose} className="p-3 bg-white/5 hover:bg-red-600 border border-white/10 rounded-2xl transition-all shadow-lg active:scale-95">
+                  <button onClick={() => { flushTelemetrySession('close'); onClose(); }} className="p-3 bg-white/5 hover:bg-red-600 border border-white/10 rounded-2xl transition-all shadow-lg active:scale-95">
                     <X size={24} color="white" />
                   </button>
                </div>
@@ -627,7 +1116,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
             <p className="text-gray-400 max-w-md text-lg leading-relaxed mb-10 font-bold">{error}</p>
             
             <div className="flex gap-4">
-               <button onClick={() => { setError(null); setLoading(true); setStrategy(detectStrategy(streamUrl)); }} className="px-10 py-4 bg-white text-black font-black uppercase italic tracking-tighter rounded-xl hover:bg-gray-200 transition-all active:scale-95 shadow-xl">Tentar Novamente</button>
+               <button onClick={() => restartPlayback('manual')} className="px-10 py-4 bg-white text-black font-black uppercase italic tracking-tighter rounded-xl hover:bg-gray-200 transition-all active:scale-95 shadow-xl">Tentar Novamente</button>
                <button onClick={runDiagnostic} disabled={diagnosing} className="px-10 py-4 bg-zinc-800 text-white font-black uppercase italic tracking-tighter rounded-xl hover:bg-zinc-700 transition-all disabled:opacity-50">Diagnosticando...</button>
             </div>
          </div>
@@ -657,7 +1146,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
                        {cat.items.map(item => (
                          <button 
                            key={item.id} 
-                           onClick={() => { setInternalUrl(item.videoUrl); setInternalMedia(item); setLoading(true); if (layout.isMobile) setIsSidebarOpen(false); }}
+                            onClick={() => { flushTelemetrySession('channel_switch'); setInternalUrl(item.videoUrl); setInternalMedia(item); setLoading(true); if (layout.isMobile) setIsSidebarOpen(false); }}
                            className={`w-full text-left p-4 rounded-xl text-sm transition-all flex items-center gap-3 ${item.id === internalMedia?.id ? 'bg-red-600 text-white font-bold shadow-lg' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
                          >
                             <div className="w-1.5 h-1.5 rounded-full bg-current opacity-40" />
