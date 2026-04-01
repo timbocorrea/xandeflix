@@ -379,12 +379,10 @@ export class M3UParserService {
       }
       
       const currentCat = categoriesMap[categoryKey] as any;
-      if (currentCat.items.length < 500) {
         currentCat.items.push(item);
         if (currentCat._typeCounts[item.type] !== undefined) {
            currentCat._typeCounts[item.type]++;
         }
-      }
     });
 
     // Determine category type by majority vote to prevent a single misclassified item from taking over
@@ -433,6 +431,6 @@ export class M3UParserService {
       return a.title.localeCompare(b.title);
     });
 
-    return sortedCategories.slice(0, 300);
+    return sortedCategories.slice(0, 1000);
   }
 }

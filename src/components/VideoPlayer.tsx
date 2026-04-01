@@ -613,10 +613,10 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     }, {
       enableWorker: true,
       enableStashBuffer: true,
-      stashInitialSize: 1024 * 1024 * 3, // 3MB initial buffer to prevent freezing
-      liveBufferLatencyChasing: false, // Don't chase latency to allow buffer accumulation
-      liveBufferLatencyMaxLatency: 30, // Extremely forgiving latency (30s)
-      liveBufferLatencyMinRemain: 5, // Minimum 5s stay in buffer
+      stashInitialSize: 1024 * 1024 * 8,
+      liveBufferLatencyChasing: false,
+      liveBufferLatencyMaxLatency: 60,
+      liveBufferLatencyMinRemain: 10,
       autoCleanupSourceBuffer: true,
       autoCleanupMaxBackwardDuration: 60,
       autoCleanupMinBackwardDuration: 30,
@@ -646,11 +646,29 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       console.log('[mpegts] Loading complete');
     });
 
-    video.addEventListener('playing', () => setLoading(false));
-    video.addEventListener('waiting', () => setLoading(true));
-    video.addEventListener('canplay', () => setLoading(false));
+    let waitingTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearWaitingTimer = () => {
+      if (waitingTimer) {
+        clearTimeout(waitingTimer);
+        waitingTimer = null;
+      }
+    };
+
+    video.addEventListener('playing', () => { clearWaitingTimer(); setLoading(false); });
+    video.addEventListener('waiting', () => {
+      setLoading(true);
+      clearWaitingTimer();
+      waitingTimer = setTimeout(() => {
+        if (hasQualities) {
+          setError('Conexão instável. Reduzindo a qualidade...');
+          fallbackNextQuality();
+        }
+      }, 5000);
+    });
+    video.addEventListener('canplay', () => { clearWaitingTimer(); setLoading(false); });
     video.addEventListener('ended', triggerNext);
     video.addEventListener('error', () => {
+      clearWaitingTimer();
       console.error('[mpegts] Video element error');
       if (fallbackNextQuality()) return;
       if (strategy === 'mpegts') {
@@ -658,6 +676,12 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
         setStrategy('hls');
       }
     });
+
+    const originalDestroy = player.destroy.bind(player);
+    player.destroy = () => {
+      clearWaitingTimer();
+      originalDestroy();
+    };
 
     playerRef.current = player;
   }
@@ -683,10 +707,10 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
         html5: {
           vhs: {
             overrideNative: true,
-            enableLowInitialPlaylist: false, // Favor higher quality list if available
-            fastStart: false, // Don't start too fast, build buffer first
-            goalBufferLength: 15, // Force 15+ seconds of buffer ahead
-            maxGoalBufferLength: 30, // Don't allow it to buffer more than 30s to save memory
+            enableLowInitialPlaylist: false,
+            fastStart: false,
+            goalBufferLength: 30,
+            maxGoalBufferLength: 60,
           },
           nativeVideoTracks: false,
           nativeAudioTracks: false,
@@ -697,14 +721,32 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
         setLoading(false);
       });
 
+      let waitingTimer: ReturnType<typeof setTimeout> | null = null;
+      const clearWaitingTimer = () => {
+        if (waitingTimer) {
+          clearTimeout(waitingTimer);
+          waitingTimer = null;
+        }
+      };
+
       player.on('error', () => {
         if (fallbackNextQuality()) return;
       });
 
-      player.on('waiting', () => setLoading(true));
-      player.on('playing', () => setLoading(false));
+      player.on('waiting', () => {
+        setLoading(true);
+        clearWaitingTimer();
+        waitingTimer = setTimeout(() => {
+          if (hasQualities) {
+            setError('Conexão instável. Reduzindo a qualidade...');
+            fallbackNextQuality();
+          }
+        }, 5000);
+      });
+      player.on('playing', () => { clearWaitingTimer(); setLoading(false); });
       player.on('ended', triggerNext);
       player.on('error', () => {
+        clearWaitingTimer();
         if (fallbackNextQuality()) return;
         const err = player.error();
         console.error('[VideoJS] Error:', err?.message);
@@ -718,6 +760,12 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
         }
       });
 
+      const originalDispose = player.dispose.bind(player);
+      player.dispose = () => {
+        clearWaitingTimer();
+        originalDispose();
+      };
+
       playerRef.current = player;
     }
   }
@@ -730,11 +778,29 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     video.controls = !isPreview;
     setActiveVideoElement(video);
 
-    const onPlaying = () => setLoading(false);
-    const onWaiting = () => setLoading(true);
-    const onCanPlay = () => setLoading(false);
+    let waitingTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearWaitingTimer = () => {
+      if (waitingTimer) {
+        clearTimeout(waitingTimer);
+        waitingTimer = null;
+      }
+    };
+
+    const onPlaying = () => { clearWaitingTimer(); setLoading(false); };
+    const onWaiting = () => {
+      setLoading(true);
+      clearWaitingTimer();
+      waitingTimer = setTimeout(() => {
+        if (hasQualities) {
+          setError('Conexão instável. Reduzindo a qualidade...');
+          fallbackNextQuality();
+        }
+      }, 5000);
+    };
+    const onCanPlay = () => { clearWaitingTimer(); setLoading(false); };
     const onEnded = triggerNext;
     const onError = () => {
+      clearWaitingTimer();
       console.error('[Native] Video element error');
       if (fallbackNextQuality()) return;
       setError('O vídeo não pôde ser carregado. O servidor ou formato é incompatível.');
@@ -754,6 +820,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     // Store cleanup reference
     playerRef.current = {
       destroy: () => {
+        clearWaitingTimer();
         video.removeEventListener('playing', onPlaying);
         video.removeEventListener('waiting', onWaiting);
         video.removeEventListener('canplay', onCanPlay);

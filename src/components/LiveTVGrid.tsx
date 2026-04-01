@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableHighlight, Image, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableHighlight, Image, Dimensions, FlatList, ListRenderItem } from 'react-native';
 import { Radio, ChevronRight, Play, Maximize2, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Media } from '../types';
@@ -73,8 +73,14 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
           <Radio size={20} color="#E50914" />
           <Text style={styles.columnTitle}>GRUPOS</Text>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-          {liveCategories.map(cat => (
+        <FlatList
+          data={liveCategories}
+          keyExtractor={cat => cat.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          removeClippedSubviews={true}
+          initialNumToRender={20}
+          renderItem={({ item: cat }) => (
             <TouchableHighlight
               key={cat.id}
               onPress={() => {
@@ -95,8 +101,8 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
                 {selectedCatId === cat.id && <ChevronRight size={16} color="#E50914" />}
               </View>
             </TouchableHighlight>
-          ))}
-        </ScrollView>
+          )}
+        />
       </View>
 
       {/* Channels Column */}
@@ -112,8 +118,16 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
             />
           </View>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-          {filteredItems.map(media => (
+        <FlatList
+          data={filteredItems}
+          keyExtractor={media => media.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          removeClippedSubviews={true}
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          renderItem={({ item: media }) => (
             <TouchableHighlight
               key={media.id}
               onPress={() => handleMediaClick(media)}
@@ -142,8 +156,8 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
                 </View>
               </View>
             </TouchableHighlight>
-          ))}
-        </ScrollView>
+          )}
+        />
       </View>
 
       {/* Preview Player Section */}
