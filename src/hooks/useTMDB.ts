@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { cleanMediaTitle } from '../lib/titleCleaner';
+import { apiFetch, buildApiUrl } from '../lib/api';
 
 interface TMDBData {
   description: string;
@@ -57,11 +58,12 @@ export const useTMDB = (title: string | undefined, type: string | undefined) => 
         if (year) {
           apiUrl += `&year=${year}`;
         }
+        apiUrl = buildApiUrl(apiUrl);
 
         let request = inFlightRequests.get(cacheKey);
         if (!request) {
           request = (async () => {
-            const response = await fetch(apiUrl);
+            const response = await apiFetch(apiUrl);
             
             if (!response.ok) {
               throw new Error('Failed to fetch metadata');

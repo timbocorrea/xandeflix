@@ -3,6 +3,7 @@ import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Tras
 import { useStore } from '../store/useStore';
 import { M3UParser } from '../lib/m3uParser';
 import { maskUrlCredentials } from '../lib/securityUtils';
+import { apiFetch, buildApiUrl } from '../lib/api';
 
 // Wrapper to isolate lucide icons from react-native-web's createElement
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -106,8 +107,8 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setMediaOverrides(user.mediaOverrides || {});
     setPreviewLoading(true);
     try {
-      const fetchUrl = `/api/proxy-playlist?url=${encodeURIComponent(user.playlistUrl)}`;
-      const response = await fetch(fetchUrl, {
+      const fetchUrl = buildApiUrl(`/api/proxy-playlist?url=${encodeURIComponent(user.playlistUrl)}`);
+      const response = await apiFetch(fetchUrl, {
         headers: { 'x-auth-token': authToken }
       });
       if (!response.ok) {
@@ -129,17 +130,17 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setSavingHidden(true);
     try {
       const [hiddenRes, overridesRes] = await Promise.all([
-        fetch(`/api/admin/user/${previewingUser.id}/hiddenCategories`, {
+        apiFetch(`/api/admin/user/${previewingUser.id}/hiddenCategories`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
           body: JSON.stringify({ categories: hiddenCategories })
         }),
-        fetch(`/api/admin/user/${previewingUser.id}/categoryOverrides`, {
+        apiFetch(`/api/admin/user/${previewingUser.id}/categoryOverrides`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
           body: JSON.stringify({ overrides: categoryOverrides })
         }),
-        fetch(`/api/admin/user/${previewingUser.id}/mediaOverrides`, {
+        apiFetch(`/api/admin/user/${previewingUser.id}/mediaOverrides`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
           body: JSON.stringify({ overrides: mediaOverrides })
@@ -180,7 +181,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     if (!query) return;
     setTmdbSearching(true);
     try {
-      const resp = await fetch(`/api/tmdb/search?query=${encodeURIComponent(query)}&type=${type}`);
+      const resp = await apiFetch(`/api/tmdb/search?query=${encodeURIComponent(query)}&type=${type}`);
       const data = await resp.json();
       setTmdbSearchResults(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -229,7 +230,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/admin/users', {
+      const response = await apiFetch('/api/admin/users', {
         headers: { 'x-admin-token': authToken }
       });
       if (!response.ok) {
@@ -248,7 +249,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setTelemetryLoading(true);
     setTelemetryError(null);
     try {
-      const response = await fetch('/api/admin/player-telemetry?hours=24', {
+      const response = await apiFetch('/api/admin/player-telemetry?hours=24', {
         headers: { 'x-admin-token': authToken }
       });
       if (!response.ok) {
@@ -272,7 +273,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setActionLoading(userId);
     setError(null);
     try {
-      const response = await fetch('/api/admin/user/status', {
+      const response = await apiFetch('/api/admin/user/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ userId, blocked: !currentStatus })
@@ -293,7 +294,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/admin/user/add', {
+      const response = await apiFetch('/api/admin/user/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ 
@@ -323,7 +324,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setActionLoading(userId);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/user/${userId}`, {
+      const response = await apiFetch(`/api/admin/user/${userId}`, {
         method: 'DELETE',
         headers: { 'x-admin-token': authToken }
       });
@@ -343,7 +344,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setActionLoading(editingUser.id);
     setError(null);
     try {
-      const response = await fetch('/api/admin/user/update', {
+      const response = await apiFetch('/api/admin/user/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
         body: JSON.stringify({ 
@@ -991,7 +992,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
               <button 
                 onClick={async () => { 
                    if (isGlobalOverride && editingItem) {
-                     await fetch('/api/admin/globalMediaOverride', {
+                     await apiFetch('/api/admin/globalMediaOverride', {
                        method: 'POST',
                        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
                        body: JSON.stringify({

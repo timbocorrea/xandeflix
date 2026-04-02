@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableHighlight, StyleSheet, ActivityIndicator } from 'react-native';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../store/useStore';
+import { apiFetch } from '../lib/api';
 
 interface LoginScreenProps {
   onLoginSuccess: (playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => void;
@@ -24,7 +25,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setError(null);
 
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier: identifier.trim(), token: password })
@@ -47,7 +48,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         setAdultAccessSettings(result.data?.adultAccess);
         onLoginSuccess(result.data?.playlistUrl, result.data?.id, result.sessionToken, 'user');
       }
-    } catch (err) {
+    } catch (err: any) {
       setError('Erro de conexão com o servidor.');
     } finally {
       setLoading(false);

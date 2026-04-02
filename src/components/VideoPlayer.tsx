@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Media, Category } from '../types';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
+import { apiFetch } from '../lib/api';
 import { sendPlayerTelemetryReport, type PlayerTelemetryExitReason } from '../lib/playerTelemetry';
 
 interface VideoPlayerProps {
@@ -541,7 +542,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const runDiagnostic = async () => {
      setDiagnosing(true);
      try {
-       const res = await fetch(`/api/diagnostic?url=${encodeURIComponent(streamUrl)}`, { headers: authToken ? { 'x-auth-token': authToken } : {} });
+       const res = await apiFetch(`/api/diagnostic?url=${encodeURIComponent(streamUrl)}`, { headers: authToken ? { 'x-auth-token': authToken } : {} });
        setDiagnostic(await res.json());
      } catch { setDiagnostic({ success: false, message: 'Erro no servidor de diagnóstico.' }); }
      finally { setDiagnosing(false); }

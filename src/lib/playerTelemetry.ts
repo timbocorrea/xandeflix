@@ -1,3 +1,5 @@
+import { apiFetch } from './api';
+
 export type PlayerTelemetryExitReason =
   | 'close'
   | 'channel_switch'
@@ -32,7 +34,7 @@ export function sendPlayerTelemetryReport(report: PlayerTelemetryReport): void {
 
   const { authToken, ...payload } = report;
 
-  void fetch('/api/player-telemetry', {
+  void apiFetch('/api/player-telemetry', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -9,6 +9,7 @@ import {
   savePlaylistCache,
 } from '../lib/localCache';
 import { parseXMLTV } from '../lib/epgParser';
+import { apiFetch } from '../lib/api';
 
 export type PlaylistStatus =
   | 'idle'
@@ -57,7 +58,7 @@ export const usePlaylist = () => {
       }
 
       try {
-        const response = await fetch(`/api/proxy-playlist?url=${encodeURIComponent(epgUrl)}`, {
+        const response = await apiFetch(`/api/proxy-playlist?url=${encodeURIComponent(epgUrl)}`, {
           headers: {
             'x-auth-token': authToken,
           },
@@ -102,7 +103,7 @@ export const usePlaylist = () => {
       }
 
       setPlaylistStatus('loading_user_info');
-      const meResponse = await fetch('/api/auth/me', {
+      const meResponse = await apiFetch('/api/auth/me', {
         headers: { 'x-auth-token': authToken }
       });
 
@@ -155,7 +156,7 @@ export const usePlaylist = () => {
 
       let m3uRawText = '';
       try {
-        const response = await fetch(fetchUrl, {
+        const response = await apiFetch(fetchUrl, {
           signal: controller.signal,
           headers: {
             'x-auth-token': authToken

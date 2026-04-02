@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore';
 import { isAdultCategory } from '../lib/adultContent';
 import { clearPlaylistCache } from '../lib/localCache';
 import { usePlaylist } from '../hooks/usePlaylist';
+import { apiFetch } from '../lib/api';
 
 interface SettingsModalProps {
   isVisible: boolean;
@@ -112,7 +113,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setFeedback();
 
     try {
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-auth-token': authToken },
         body: JSON.stringify(body),

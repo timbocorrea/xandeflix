@@ -1,6 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { LoginScreen } from './screens/LoginScreen';
 import { useStore } from './store/useStore';
+import { apiFetch } from './lib/api';
 
 const HomeScreen = lazy(() => import('./screens/HomeScreen'));
 const AdminPanel = lazy(() =>
@@ -59,7 +60,7 @@ export default function App() {
       }
 
       try {
-        const response = await fetch('/api/auth/session', {
+        const response = await apiFetch('/api/auth/session', {
           headers: { 'x-auth-token': savedToken }
         });
 
