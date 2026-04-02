@@ -32,6 +32,30 @@ export function buildApiUrl(path: string): string {
   return normalizedPath;
 }
 
+export function buildMediaProxyUrl(
+  targetUrl: string,
+  authToken: string,
+  options?: {
+    rootUrl?: string;
+    parentUrl?: string;
+  },
+): string {
+  const params = new URLSearchParams({
+    url: targetUrl,
+    token: authToken,
+  });
+
+  if (options?.rootUrl) {
+    params.set('root', options.rootUrl);
+  }
+
+  if (options?.parentUrl) {
+    params.set('parent', options.parentUrl);
+  }
+
+  return buildApiUrl(`/api/proxy-media?${params.toString()}`);
+}
+
 export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   if (isNativeApiBaseUrlMissing()) {
     throw new Error(

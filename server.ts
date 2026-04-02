@@ -56,6 +56,16 @@ function getRequestAuthToken(req: express.Request): string | undefined {
   return Array.isArray(token) ? token[0] : token;
 }
 
+function getProxyRequestAuthToken(req: express.Request): string | undefined {
+  const headerToken = getRequestAuthToken(req);
+  if (headerToken) {
+    return headerToken;
+  }
+
+  const queryToken = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+  return queryToken || undefined;
+}
+
 function registerAuthorizedDomainFromUrl(targetUrl: string) {
   try {
     const hostname = new URL(targetUrl).hostname.toLowerCase();
@@ -92,6 +102,14 @@ function getUrlHostLabel(targetUrl: string): string {
     return new URL(targetUrl).host.toLowerCase();
   } catch {
     return 'invalid-url';
+  }
+}
+
+function isSameRemoteHost(leftUrl: string, rightUrl: string): boolean {
+  try {
+    return new URL(leftUrl).hostname.toLowerCase() === new URL(rightUrl).hostname.toLowerCase();
+  } catch {
+    return false;
   }
 }
 
@@ -163,6 +181,28 @@ async function isKnownManagedPlaylistUrl(targetUrl: string): Promise<boolean> {
   }
 }
 
+async function isKnownManagedPlaylistHost(targetUrl: string): Promise<boolean> {
+  try {
+    const targetHost = new URL(targetUrl).hostname.toLowerCase();
+    const users = await AdminService.listUsers();
+
+    return users.some((user) => {
+      if (!user.playlistUrl) {
+        return false;
+      }
+
+      try {
+        return new URL(user.playlistUrl).hostname.toLowerCase() === targetHost;
+      } catch {
+        return false;
+      }
+    });
+  } catch (error) {
+    console.warn('[SECURITY] Failed to verify managed playlist host:', error);
+    return false;
+  }
+}
+
 function serializeUser(user: {
   id: string;
   name: string;
@@ -187,6 +227,12 @@ function serializeUser(user: {
 
 async function getAuthenticatedUser(req: express.Request) {
   const session = AuthSessionService.getSession(getRequestAuthToken(req));
+  return getAuthenticatedUserFromSession(session);
+}
+
+async function getAuthenticatedUserFromSession(
+  session: ReturnType<typeof AuthSessionService.getSession>,
+) {
   if (!session || session.role !== 'user' || !session.userId) {
     return { session: null, user: null };
   }
@@ -201,6 +247,254 @@ async function getAuthenticatedUser(req: express.Request) {
   }
 
   return { session, user };
+}
+
+async function fetchRemoteText(targetUrl: string): Promise<{ text: string; finalUrl: string }> {
+  const response = await axios.get(targetUrl, {
+    timeout: 20000,
+    responseType: 'text',
+    maxRedirects: 5,
+    headers: {
+      'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+      'Accept': '*/*',
+    },
+  });
+
+  const finalUrl = ((response.request as any)?.res?.responseUrl as string | undefined) || targetUrl;
+  return {
+    text: typeof response.data === 'string' ? response.data : '',
+    finalUrl,
+  };
+}
+
+function extractPlaylistReferences(rawText: string, baseUrl: string): string[] {
+  const references = new Set<string>();
+  const uriAttributeRegex = /\bURI=(?:"([^"]+)"|'([^']+)'|([^,\s]+))/gi;
+
+  const pushResolvedUrl = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    try {
+      const resolved = new URL(trimmed, baseUrl).toString();
+      if (isRemoteHttpUrl(resolved)) {
+        references.add(resolved);
+      }
+    } catch {
+      // Ignore malformed child URLs from provider playlists.
+    }
+  };
+
+  for (const line of rawText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    if (!trimmed.startsWith('#')) {
+      pushResolvedUrl(trimmed);
+      continue;
+    }
+
+    uriAttributeRegex.lastIndex = 0;
+    let match: RegExpExecArray | null = null;
+    while ((match = uriAttributeRegex.exec(trimmed)) !== null) {
+      pushResolvedUrl(match[1] || match[2] || match[3] || '');
+    }
+  }
+
+  return Array.from(references);
+}
+
+async function playlistReferencesChildUrl(parentUrl: string, childUrl: string): Promise<boolean> {
+  try {
+    const normalizedChild = new URL(childUrl).toString();
+    const { text, finalUrl } = await fetchRemoteText(parentUrl);
+    const references = extractPlaylistReferences(text, finalUrl);
+    return references.includes(normalizedChild);
+  } catch (error) {
+    console.warn(
+      `[SECURITY] Failed to validate child media URL against parent host ${getUrlHostLabel(parentUrl)}:`,
+      error,
+    );
+    return false;
+  }
+}
+
+async function resolveAuthorizedChildMediaUrl(
+  requestedUrl: string,
+  options: {
+    rootUrl?: string;
+    parentUrl?: string;
+    isDirectlyAuthorized: (url: string) => Promise<boolean>;
+  },
+): Promise<string | null> {
+  if (!requestedUrl || !isRemoteHttpUrl(requestedUrl)) {
+    return null;
+  }
+
+  if (await options.isDirectlyAuthorized(requestedUrl)) {
+    return requestedUrl;
+  }
+
+  const rootUrl = options.rootUrl?.trim();
+  if (!rootUrl || !isRemoteHttpUrl(rootUrl) || !(await options.isDirectlyAuthorized(rootUrl))) {
+    return null;
+  }
+
+  const parentUrl = options.parentUrl && isRemoteHttpUrl(options.parentUrl)
+    ? options.parentUrl.trim()
+    : rootUrl;
+
+  if (parentUrl !== rootUrl) {
+    const parentAuthorized = await playlistReferencesChildUrl(rootUrl, parentUrl);
+    if (!parentAuthorized) {
+      return null;
+    }
+  }
+
+  const childAuthorized = await playlistReferencesChildUrl(parentUrl, requestedUrl);
+  return childAuthorized ? requestedUrl : null;
+}
+
+async function resolveAuthorizedUserMediaUrl(
+  requestedUrl: string,
+  userPlaylistUrl: string,
+  rootUrl?: string,
+  parentUrl?: string,
+): Promise<string | null> {
+  return resolveAuthorizedChildMediaUrl(requestedUrl, {
+    rootUrl,
+    parentUrl,
+    isDirectlyAuthorized: async (candidateUrl) =>
+      isSameRemoteHost(candidateUrl, userPlaylistUrl) || isAllowedPlaylistUrl(candidateUrl),
+  });
+}
+
+async function resolveAuthorizedAdminMediaUrl(
+  requestedUrl: string,
+  rootUrl?: string,
+  parentUrl?: string,
+): Promise<string | null> {
+  return resolveAuthorizedChildMediaUrl(requestedUrl, {
+    rootUrl,
+    parentUrl,
+    isDirectlyAuthorized: async (candidateUrl) =>
+      isAllowedPlaylistUrl(candidateUrl) ||
+      await isKnownManagedPlaylistUrl(candidateUrl) ||
+      await isKnownManagedPlaylistHost(candidateUrl),
+  });
+}
+
+function buildProxyMediaPath(
+  targetUrl: string,
+  token: string,
+  options?: {
+    rootUrl?: string;
+    parentUrl?: string;
+  },
+): string {
+  const params = new URLSearchParams({
+    url: targetUrl,
+    token,
+  });
+
+  if (options?.rootUrl) {
+    params.set('root', options.rootUrl);
+  }
+
+  if (options?.parentUrl) {
+    params.set('parent', options.parentUrl);
+  }
+
+  return `/api/proxy-media?${params.toString()}`;
+}
+
+function rewriteHlsPlaylist(
+  rawText: string,
+  baseUrl: string,
+  token: string,
+  options?: {
+    rootUrl?: string;
+    parentUrl?: string;
+  },
+): string {
+  const rootUrl = options?.rootUrl || baseUrl;
+  const parentUrl = options?.parentUrl || baseUrl;
+  const uriAttributeRegex = /\bURI=(?:"([^"]+)"|'([^']+)'|([^,\s]+))/gi;
+
+  const proxify = (value: string) => {
+    const absoluteUrl = new URL(value, baseUrl).toString();
+    return buildProxyMediaPath(absoluteUrl, token, {
+      rootUrl,
+      parentUrl,
+    });
+  };
+
+  return rawText
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return line;
+      }
+
+      if (!trimmed.startsWith('#')) {
+        try {
+          return proxify(trimmed);
+        } catch {
+          return line;
+        }
+      }
+
+      return line.replace(uriAttributeRegex, (match, quoted, singleQuoted, bare) => {
+        const rawValue = quoted || singleQuoted || bare || '';
+        if (!rawValue) {
+          return match;
+        }
+
+        try {
+          return `URI="${proxify(rawValue)}"`;
+        } catch {
+          return match;
+        }
+      });
+    })
+    .join('\n');
+}
+
+function isHlsResponse(contentType: unknown, targetUrl: string): boolean {
+  const normalizedType = String(contentType || '').toLowerCase();
+  const normalizedUrl = targetUrl.toLowerCase();
+
+  return (
+    normalizedType.includes('application/vnd.apple.mpegurl') ||
+    normalizedType.includes('application/x-mpegurl') ||
+    normalizedType.includes('audio/mpegurl') ||
+    normalizedUrl.includes('.m3u8')
+  );
+}
+
+function copyUpstreamMediaHeaders(res: express.Response, headers: Record<string, unknown>) {
+  const passthroughHeaders = [
+    'content-type',
+    'content-length',
+    'content-range',
+    'accept-ranges',
+    'cache-control',
+    'etag',
+    'last-modified',
+    'expires',
+  ];
+
+  for (const headerName of passthroughHeaders) {
+    const headerValue = headers[headerName];
+    if (typeof headerValue === 'string' && headerValue.length > 0) {
+      res.setHeader(headerName, headerValue);
+    }
+  }
 }
 
 
@@ -234,7 +528,8 @@ const apiLimiter = rateLimit({
 	max: 2000, 
 	standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
 	legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  message: { error: 'Too many requests, please try again later.' }
+  message: { error: 'Too many requests, please try again later.' },
+  skip: (req) => req.path === '/proxy-media',
 });
 app.use('/api', apiLimiter);
 
@@ -325,6 +620,128 @@ app.get('/api/proxy-playlist', async (req, res) => {
   } catch (error: any) {
     console.error('[PROXY] Erro ao buscar playlist remota:', error.message);
     res.status(500).json({ error: 'Falha ao buscar conteúdo remoto', details: error.message });
+  }
+});
+
+app.get('/api/proxy-media', async (req, res) => {
+  try {
+    const session = AuthSessionService.getSession(getProxyRequestAuthToken(req));
+    if (!session) {
+      return res.status(401).json({ error: 'Sessao invalida ou nao autorizado' });
+    }
+
+    const requestedUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    const rootUrl = typeof req.query.root === 'string' ? req.query.root.trim() : '';
+    const parentUrl = typeof req.query.parent === 'string' ? req.query.parent.trim() : '';
+    const proxyToken = getProxyRequestAuthToken(req) || '';
+
+    if (!requestedUrl) {
+      return res.status(400).json({ error: 'URL da midia e obrigatoria' });
+    }
+
+    if (!isRemoteHttpUrl(requestedUrl)) {
+      return res.status(400).json({ error: 'URL da midia invalida' });
+    }
+
+    let mediaUrl = requestedUrl;
+
+    if (session.role === 'user') {
+      const { user } = await getAuthenticatedUserFromSession(session);
+      if (!user) {
+        return res.status(401).json({ error: 'Sessao invalida ou nao autorizado' });
+      }
+
+      const resolvedUserUrl = await resolveAuthorizedUserMediaUrl(
+        requestedUrl,
+        user.playlistUrl,
+        rootUrl,
+        parentUrl,
+      );
+
+      if (!resolvedUserUrl) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'A URL de midia solicitada nao esta autorizada para este usuario.',
+        });
+      }
+
+      mediaUrl = resolvedUserUrl;
+    } else {
+      const resolvedAdminUrl = await resolveAuthorizedAdminMediaUrl(requestedUrl, rootUrl, parentUrl);
+      if (!resolvedAdminUrl) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'A URL de midia solicitada nao esta autorizada para uso no proxy.',
+        });
+      }
+
+      mediaUrl = resolvedAdminUrl;
+    }
+
+    const upstreamHeaders: Record<string, string> = {
+      'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+      'Accept': typeof req.headers.accept === 'string' ? req.headers.accept : '*/*',
+    };
+
+    if (typeof req.headers.range === 'string' && req.headers.range.trim()) {
+      upstreamHeaders.Range = req.headers.range;
+    }
+
+    const upstreamResponse = await axios.get(mediaUrl, {
+      timeout: 0,
+      responseType: 'stream',
+      maxRedirects: 5,
+      validateStatus: () => true,
+      headers: upstreamHeaders,
+    });
+
+    const finalResponseUrl = ((upstreamResponse.request as any)?.res?.responseUrl as string | undefined) || mediaUrl;
+    const contentType = upstreamResponse.headers['content-type'];
+
+    if (isHlsResponse(contentType, finalResponseUrl)) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of upstreamResponse.data as AsyncIterable<Buffer | string>) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+
+      const rewrittenPlaylist = rewriteHlsPlaylist(
+        Buffer.concat(chunks).toString('utf8'),
+        finalResponseUrl,
+        proxyToken,
+        {
+          rootUrl: rootUrl || requestedUrl,
+          parentUrl: requestedUrl,
+        },
+      );
+
+      res.status(upstreamResponse.status);
+      res.setHeader('Content-Type', typeof contentType === 'string' ? contentType : 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.send(rewrittenPlaylist);
+    }
+
+    res.status(upstreamResponse.status);
+    copyUpstreamMediaHeaders(res, upstreamResponse.headers as Record<string, unknown>);
+
+    const upstreamStream = upstreamResponse.data as NodeJS.ReadableStream;
+    upstreamStream.on('error', (error) => {
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'Falha ao transmitir midia remota', details: String(error) });
+      } else {
+        res.end();
+      }
+    });
+
+    res.on('close', () => {
+      if ('destroy' in upstreamStream && typeof upstreamStream.destroy === 'function') {
+        upstreamStream.destroy();
+      }
+    });
+
+    upstreamStream.pipe(res);
+  } catch (error: any) {
+    console.error('[PROXY-MEDIA] Erro ao transmitir midia remota:', error.message);
+    res.status(500).json({ error: 'Falha ao transmitir midia remota', details: error.message });
   }
 });
 

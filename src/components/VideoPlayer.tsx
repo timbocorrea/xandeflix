@@ -1,4 +1,5 @@
 import React, { useEffect, useImperativeHandle, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
 import mpegts from 'mpegts.js';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
@@ -7,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Media, Category } from '../types';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
-import { apiFetch } from '../lib/api';
+import { apiFetch, buildMediaProxyUrl } from '../lib/api';
 import { sendPlayerTelemetryReport, type PlayerTelemetryExitReason } from '../lib/playerTelemetry';
 
 interface VideoPlayerProps {
@@ -61,6 +62,7 @@ const LIVE_RECOVERY_COOLDOWN_MS = 10000;
 const LIVE_STABLE_PLAYBACK_RESET_MS = 30000;
 const LIVE_MAX_AUTO_RECOVERIES = 3;
 const LIVE_TELEMETRY_SAMPLE_RATE = 0.05;
+const VOD_STARTUP_TIMEOUT_MS = 12000;
 
 function extractOriginalStreamUrl(playerUrl: string): string {
   if (!playerUrl) return '';
@@ -80,6 +82,10 @@ function buildPlayerSourceUrl(playerUrl: string, reloadToken: number): string {
   }
 }
 
+function shouldProxyPlaybackUrl(playerUrl: string, authToken: string): boolean {
+  return Capacitor.isNativePlatform() && Boolean(authToken) && /^https?:\/\//i.test(playerUrl);
+}
+
 function extractStreamHost(playerUrl: string): string {
   const original = extractOriginalStreamUrl(playerUrl);
   if (!original) return '';
@@ -91,6 +97,39 @@ function extractStreamHost(playerUrl: string): string {
   }
 }
 
+function isLikelyTransportStreamUrl(playerUrl: string): boolean {
+  const original = extractOriginalStreamUrl(playerUrl);
+  if (!original) return false;
+
+  if (
+    original.includes('/live/') ||
+    original.includes('output=ts') ||
+    original.includes('output=mpegts') ||
+    /\.ts(?:$|[?#])/i.test(original)
+  ) {
+    return true;
+  }
+
+  if (
+    original.includes('.m3u8') ||
+    original.includes('output=hls') ||
+    /\.(mp4|m4v|mov|mkv|avi|webm|mpg|mpeg|ogv)(?:$|[?#])/i.test(original)
+  ) {
+    return false;
+  }
+
+  try {
+    const pathname = new URL(playerUrl).pathname.toLowerCase();
+    return /^\/[^/?#]+\/[^/?#]+\/\d+(?:\/)?$/.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function shouldUseContinuousTransportPipeline(playerUrl: string, isLiveStream: boolean): boolean {
+  return isLiveStream || isLikelyTransportStreamUrl(playerUrl);
+}
+
 function detectStrategy(proxyUrl: string, isLiveStream: boolean): PlaybackStrategy {
   const original = extractOriginalStreamUrl(proxyUrl);
   if (original.includes('.m3u8') || original.includes('output=hls')) return 'hls';
@@ -100,6 +139,9 @@ function detectStrategy(proxyUrl: string, isLiveStream: boolean): PlaybackStrate
     /\.(mp4|m4v|mov|mkv|avi|webm|mpg|mpeg|ogv)(?:$|[?#])/i.test(original)
   ) {
     return 'native';
+  }
+  if (!isLiveStream && isLikelyTransportStreamUrl(proxyUrl)) {
+    return 'mpegts';
   }
   if (
     original.includes('/live/') ||
@@ -116,7 +158,7 @@ function buildStrategyCandidates(proxyUrl: string, isLiveStream: boolean): Playb
   const primary = detectStrategy(proxyUrl, isLiveStream);
   const ordered: PlaybackStrategy[] = isLiveStream
     ? [primary, 'hls', 'mpegts', 'native']
-    : [primary, 'native', 'hls', 'mpegts'];
+    : [primary, 'mpegts', 'native', 'hls'];
 
   return ordered.filter((candidate, index) => ordered.indexOf(candidate) === index);
 }
@@ -187,7 +229,11 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const hasQualities = qualities.length > 1;
   const isLiveStream = (internalMedia?.type || mediaType) === 'live';
   const streamUrl = currentQuality?.url || internalUrl;
-  const sourceUrl = React.useMemo(() => buildPlayerSourceUrl(streamUrl, reloadNonce), [streamUrl, reloadNonce]);
+  const rawSourceUrl = React.useMemo(() => buildPlayerSourceUrl(streamUrl, reloadNonce), [streamUrl, reloadNonce]);
+  const useContinuousTransportPipeline = React.useMemo(
+    () => shouldUseContinuousTransportPipeline(streamUrl, isLiveStream),
+    [isLiveStream, streamUrl],
+  );
   const [strategy, setStrategy] = React.useState<PlaybackStrategy>(() => detectStrategy(streamUrl, isLiveStream));
   const minimizedWidth = layout.isMobile ? 240 : layout.isTablet ? 360 : 480;
   const minimizedHeight = Math.round(minimizedWidth * 9 / 16);
@@ -197,6 +243,13 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
   const [diagnostic, setDiagnostic] = React.useState<any>(null);
   const [diagnosing, setDiagnosing] = React.useState(false);
   const authToken = localStorage.getItem('xandeflix_auth_token') || '';
+  const sourceUrl = React.useMemo(() => {
+    if (!shouldProxyPlaybackUrl(rawSourceUrl, authToken)) {
+      return rawSourceUrl;
+    }
+
+    return buildMediaProxyUrl(rawSourceUrl, authToken, { rootUrl: rawSourceUrl });
+  }, [authToken, rawSourceUrl]);
 
   // Progress persistence hooks
   const updateWatchHistory = useStore((state) => state.updateWatchHistory);
@@ -888,9 +941,28 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     return true;
   }, [strategy, strategyCandidates]);
 
+  useEffect(() => {
+    if (!activeVideoElement || isLiveStream || error) return;
+
+    const video = activeVideoElement;
+    const timeout = window.setTimeout(() => {
+      const currentPlaybackTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+      const hasRealPlaybackProgress = currentPlaybackTime > 0.5 || video.ended;
+
+      if (hasRealPlaybackProgress) return;
+
+      if (fallbackNextStrategy()) return;
+
+      setLoading(false);
+      setError('A reproducao nao iniciou. Tente novamente ou selecione outro conteudo.');
+    }, VOD_STARTUP_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeVideoElement, error, fallbackNextStrategy, isLiveStream, sourceUrl, strategy]);
+
   function initMpegTs(video: HTMLVideoElement) {
     if (!mpegts.isSupported()) { setStrategy('hls'); return; }
-    const player = mpegts.createPlayer({ type: 'mpegts', isLive: isLiveStream, url: sourceUrl });
+    const player = mpegts.createPlayer({ type: 'mpegts', isLive: useContinuousTransportPipeline, url: sourceUrl });
     player.attachMediaElement(video);
     player.load();
     video.controls = false;
@@ -939,7 +1011,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
 
     const player = mpegts.createPlayer({ 
       type: 'mpegts', 
-      isLive: isLiveStream, 
+      isLive: useContinuousTransportPipeline, 
       url: sourceUrl,
       withCredentials: false 
     });
@@ -963,7 +1035,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     if (res && typeof (res as any).catch === 'function') {
       (res as any).catch(() => {});
     }
-  }, [fallbackNextQuality, fallbackNextStrategy, isLiveStream, restartPlayback, sourceUrl]);
+  }, [fallbackNextQuality, fallbackNextStrategy, restartPlayback, sourceUrl, useContinuousTransportPipeline]);
 
   const startHlsPlayer = React.useCallback((video: HTMLVideoElement) => {
     const player = videojs(video, {
@@ -1272,7 +1344,7 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
        </AnimatePresence>
 
        <div ref={containerRef} className="w-full h-full">
-         <video ref={videoRef} className="w-full h-full object-contain" crossOrigin="anonymous" playsInline />
+         <video ref={videoRef} className="w-full h-full object-contain" playsInline />
        </div>
     </motion.div>
   );
