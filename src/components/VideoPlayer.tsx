@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Media, Category } from '../types';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 import { useStore } from '../store/useStore';
-import { apiFetch, buildMediaProxyUrl } from '../lib/api';
+import { apiFetch, buildMediaProxyUrl, isMediaProxyEnabled } from '../lib/api';
 import { sendPlayerTelemetryReport, type PlayerTelemetryExitReason } from '../lib/playerTelemetry';
 
 interface VideoPlayerProps {
@@ -55,6 +55,7 @@ interface LiveTelemetrySession {
 }
 
 type PlaybackStrategy = 'mpegts' | 'hls' | 'native';
+const EMPTY_QUALITIES: { name: string; url: string }[] = [];
 
 const LIVE_STALL_DETECTION_MS = 15000;
 const LIVE_STALL_FORCE_RECOVERY_MS = 25000;
@@ -66,6 +67,19 @@ const VOD_STARTUP_TIMEOUT_MS = 12000;
 
 function extractOriginalStreamUrl(playerUrl: string): string {
   if (!playerUrl) return '';
+
+  // On Android/Capacitor, URLs are proxied via /api/proxy-media?url=ORIGINAL
+  // Extract the original IPTV URL so strategy detection works correctly.
+  try {
+    const parsed = new URL(playerUrl);
+    if (parsed.pathname.includes('/proxy-media')) {
+      const originalUrl = parsed.searchParams.get('url');
+      if (originalUrl) return originalUrl.toLowerCase();
+    }
+  } catch {
+    // Not a valid URL, fall through to raw lowercasing.
+  }
+
   return playerUrl.toLowerCase();
 }
 
@@ -83,7 +97,26 @@ function buildPlayerSourceUrl(playerUrl: string, reloadToken: number): string {
 }
 
 function shouldProxyPlaybackUrl(playerUrl: string, authToken: string): boolean {
-  return Capacitor.isNativePlatform() && Boolean(authToken) && /^https?:\/\//i.test(playerUrl);
+  if (
+    !isMediaProxyEnabled() ||
+    !Capacitor.isNativePlatform() ||
+    !authToken ||
+    !/^https?:\/\//i.test(playerUrl)
+  ) {
+    return false;
+  }
+
+  const original = extractOriginalStreamUrl(playerUrl);
+  const isDirectFileVod = /\.(mp4|m4v|mov|mkv|avi|webm|mpg|mpeg|ogv)(?:$|[?#])/i.test(original);
+
+  // Direct VOD files already play in the browser without proxying.
+  // On Android, bypassing the proxy avoids failures in the native media stack
+  // while keeping HLS/TS streams proxied when they actually need it.
+  if (isDirectFileVod) {
+    return false;
+  }
+
+  return true;
 }
 
 function extractStreamHost(playerUrl: string): string {
@@ -132,24 +165,18 @@ function shouldUseContinuousTransportPipeline(playerUrl: string, isLiveStream: b
 
 function detectStrategy(proxyUrl: string, isLiveStream: boolean): PlaybackStrategy {
   const original = extractOriginalStreamUrl(proxyUrl);
+  const isTransportStream = isLikelyTransportStreamUrl(proxyUrl);
+
   if (original.includes('.m3u8') || original.includes('output=hls')) return 'hls';
+  // Xtream Codes often serves VOD as /movie/.../*.ts or /series/.../*.ts.
+  // Those URLs are transport streams and must go through mpegts.js, not the native player.
+  if (isTransportStream) return 'mpegts';
   if (
     original.includes('/movie/') ||
     original.includes('/series/') ||
     /\.(mp4|m4v|mov|mkv|avi|webm|mpg|mpeg|ogv)(?:$|[?#])/i.test(original)
   ) {
     return 'native';
-  }
-  if (!isLiveStream && isLikelyTransportStreamUrl(proxyUrl)) {
-    return 'mpegts';
-  }
-  if (
-    original.includes('/live/') ||
-    original.includes('output=ts') ||
-    original.includes('output=mpegts') ||
-    /\.ts(?:$|[?#])/i.test(original)
-  ) {
-    return 'mpegts';
   }
   return isLiveStream ? 'mpegts' : 'native';
 }
@@ -223,7 +250,10 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
 
   // Quality settings
   const [activeQualityIndex, setActiveQualityIndex] = React.useState(0);
-  const qualities = internalMedia?.type === 'live' ? internalMedia.qualities || [] : [];
+  const qualities = React.useMemo(
+    () => (internalMedia?.type === 'live' ? internalMedia.qualities || EMPTY_QUALITIES : EMPTY_QUALITIES),
+    [internalMedia?.qualities, internalMedia?.type],
+  );
   const safeQualityIndex = qualities.length > 0 ? Math.min(activeQualityIndex, qualities.length - 1) : 0;
   const currentQuality = qualities[safeQualityIndex] || null;
   const hasQualities = qualities.length > 1;
@@ -1080,13 +1110,18 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
       if (isLiveStream) restartPlayback('ended');
     };
     video.onerror = () => {
+      const errCode = video.error?.code || 'Unknown';
+      const errMsg = video.error?.message || 'No message';
+      console.error(`[Player] Native video error code: ${errCode}, message: ${errMsg}`);
+
       if (fallbackNextQuality()) return;
       if (fallbackNextStrategy()) return;
+
       if (isLiveStream) {
         restartPlayback('error');
         return;
       }
-      setError('Erro no video.');
+      setError(`Erro no video (Code ${errCode}). Formato incompatível ou bloqueio na rede.`);
       setLoading(false);
     };
   }, [fallbackNextQuality, fallbackNextStrategy, isLiveStream, restartPlayback, sourceUrl]);
@@ -1098,6 +1133,8 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
     setError(null);
     const video = videoRef.current;
     if (!video) return;
+    console.log(`[Player] Init strategy=${strategy}, isLive=${isLiveStream}, sourceUrl=${sourceUrl.substring(0, 120)}...`);
+    console.log(`[Player] isNative=${Capacitor.isNativePlatform()}, origin=${window.location.origin}, proxy=${shouldProxyPlaybackUrl(streamUrl, authToken)}`);
     if (strategy === 'mpegts') startMpegTsPlayer(video);
     else if (strategy === 'hls') startHlsPlayer(video);
     else startNativePlayer(video);

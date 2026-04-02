@@ -365,12 +365,22 @@ async function resolveAuthorizedUserMediaUrl(
   rootUrl?: string,
   parentUrl?: string,
 ): Promise<string | null> {
-  return resolveAuthorizedChildMediaUrl(requestedUrl, {
+  const resolvedUrl = await resolveAuthorizedChildMediaUrl(requestedUrl, {
     rootUrl,
     parentUrl,
     isDirectlyAuthorized: async (candidateUrl) =>
       isSameRemoteHost(candidateUrl, userPlaylistUrl) || isAllowedPlaylistUrl(candidateUrl),
   });
+
+  if (resolvedUrl) {
+    return resolvedUrl;
+  }
+
+  // Direct VOD entries often point to a CDN host different from the playlist host.
+  // For native app playback, allow the media URL when it is explicitly referenced
+  // by the authenticated user's own M3U playlist.
+  const referencedByUserPlaylist = await playlistReferencesChildUrl(userPlaylistUrl, requestedUrl);
+  return referencedByUserPlaylist ? requestedUrl : null;
 }
 
 async function resolveAuthorizedAdminMediaUrl(
@@ -529,7 +539,7 @@ const apiLimiter = rateLimit({
 	standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
 	legacyHeaders: false, // Disable the `X-RateLimit-*` headers
   message: { error: 'Too many requests, please try again later.' },
-  skip: (req) => req.path === '/proxy-media',
+  skip: (req) => process.env.NODE_ENV === 'development' || req.path.includes('/proxy-media'),
 });
 app.use('/api', apiLimiter);
 
@@ -623,7 +633,7 @@ app.get('/api/proxy-playlist', async (req, res) => {
   }
 });
 
-app.get('/api/proxy-media', async (req, res) => {
+app.get(['/api/proxy-media', '/api/proxy-media/stream.mp4', '/api/proxy-media/stream.m3u8'], async (req, res) => {
   try {
     const session = AuthSessionService.getSession(getProxyRequestAuthToken(req));
     if (!session) {
@@ -681,6 +691,7 @@ app.get('/api/proxy-media', async (req, res) => {
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
       'Accept': typeof req.headers.accept === 'string' ? req.headers.accept : '*/*',
+      'Accept-Encoding': 'identity',
     };
 
     if (typeof req.headers.range === 'string' && req.headers.range.trim()) {
@@ -691,6 +702,7 @@ app.get('/api/proxy-media', async (req, res) => {
       timeout: 0,
       responseType: 'stream',
       maxRedirects: 5,
+      decompress: false, // Prevent Axios from stripping Content-Length
       validateStatus: () => true,
       headers: upstreamHeaders,
     });

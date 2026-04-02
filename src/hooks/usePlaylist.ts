@@ -9,7 +9,7 @@ import {
   savePlaylistCache,
 } from '../lib/localCache';
 import { parseXMLTV } from '../lib/epgParser';
-import { apiFetch } from '../lib/api';
+import { apiFetch, fetchRemoteText, isEpgProxyEnabled, isPlaylistProxyEnabled } from '../lib/api';
 
 export type PlaylistStatus =
   | 'idle'
@@ -50,6 +50,39 @@ export const usePlaylist = () => {
   const setAdultAccessSettings = useStore((state) => state.setAdultAccessSettings);
   const setEpgData = useStore((state) => state.setEpgData);
 
+  const fetchPlaylistText = useCallback(
+    async (playlistUrl: string, authToken: string) => {
+      const proxyEnabled = isPlaylistProxyEnabled();
+
+      if (!proxyEnabled) {
+        try {
+          console.log(
+            `[Playlist] BYOC direto no dispositivo para ${describePlaylistSource(playlistUrl)}...`,
+          );
+          return await fetchRemoteText(playlistUrl, {
+            headers: { Accept: '*/*' },
+            timeoutMs: 60000,
+          });
+        } catch (error) {
+          console.warn('[Playlist] Falha no acesso direto da playlist. Tentando proxy...', error);
+        }
+      }
+
+      const response = await apiFetch('/api/proxy-playlist', {
+        headers: {
+          'x-auth-token': authToken,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Erro ao baixar lista: HTTP ${response.status}`);
+      }
+
+      return response.text();
+    },
+    [],
+  );
+
   const hydrateEpgData = useCallback(
     async (epgUrl: string | null, authToken: string) => {
       if (!epgUrl) {
@@ -58,17 +91,34 @@ export const usePlaylist = () => {
       }
 
       try {
-        const response = await apiFetch(`/api/proxy-playlist?url=${encodeURIComponent(epgUrl)}`, {
-          headers: {
-            'x-auth-token': authToken,
-          },
-        });
+        let xmlText = '';
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+        if (!isEpgProxyEnabled()) {
+          try {
+            console.log(`[EPG] BYOC direto no dispositivo para ${describePlaylistSource(epgUrl)}...`);
+            xmlText = await fetchRemoteText(epgUrl, {
+              headers: { Accept: '*/*' },
+              timeoutMs: 60000,
+            });
+          } catch (error) {
+            console.warn('[EPG] Falha no acesso direto da grade. Tentando proxy...', error);
+          }
         }
 
-        const xmlText = await response.text();
+        if (!xmlText) {
+          const response = await apiFetch(`/api/proxy-playlist?url=${encodeURIComponent(epgUrl)}`, {
+            headers: {
+              'x-auth-token': authToken,
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          xmlText = await response.text();
+        }
+
         setEpgData(parseXMLTV(xmlText));
       } catch (error) {
         console.warn('[EPG] Falha ao carregar a grade:', error);
@@ -146,31 +196,8 @@ export const usePlaylist = () => {
       setPlaylistStatus('loading_playlist');
       setPlaylistSource(describePlaylistSource(playlistUrl));
 
-      const fetchUrl = '/api/proxy-playlist';
-      console.log(
-        `[Playlist] Buscando conteudo atraves do proxy para ${describePlaylistSource(playlistUrl)}...`,
-      );
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
-
       let m3uRawText = '';
-      try {
-        const response = await apiFetch(fetchUrl, {
-          signal: controller.signal,
-          headers: {
-            'x-auth-token': authToken
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`Erro ao baixar lista: HTTP ${response.status}`);
-        }
-
-        m3uRawText = await response.text();
-      } finally {
-        clearTimeout(timeoutId);
-      }
+      m3uRawText = await fetchPlaylistText(playlistUrl, authToken);
 
       console.log('[Playlist] Conteudo baixado. Delegando processamento para o Web Worker...');
 
@@ -250,7 +277,7 @@ export const usePlaylist = () => {
     } finally {
       setLoading(false);
     }
-  }, [hydrateEpgData, setAdultAccessSettings, setAllCategories, setEpgData, setIsUsingMock]);
+  }, [fetchPlaylistText, hydrateEpgData, setAdultAccessSettings, setAllCategories, setEpgData, setIsUsingMock]);
 
   return { fetchPlaylist, loading, playlistStatus, playlistError, playlistSource };
 };
