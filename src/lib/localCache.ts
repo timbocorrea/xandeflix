@@ -1,6 +1,8 @@
 import localforage from 'localforage';
 import { Category } from '../types';
 
+export const PLAYLIST_CACHE_SCHEMA_VERSION = 2;
+
 // Configuração do Banco IndexedDB
 localforage.config({
   name: 'Xandeflix',
@@ -9,8 +11,10 @@ localforage.config({
 });
 
 export interface PlaylistCacheData {
+  schemaVersion: number;
   data: Category[];
   timestamp: number;
+  epgUrl?: string | null;
 }
 
 const CACHE_KEY = 'xandeflix_active_playlist';
@@ -38,11 +42,17 @@ export function buildPlaylistCacheScope(userId: string, playlistUrl: string): st
 /**
  * Salva as categorias processadas no cache persistente
  */
-export async function savePlaylistCache(data: Category[], scope?: string): Promise<void> {
+export async function savePlaylistCache(
+  data: Category[],
+  scope?: string,
+  epgUrl?: string | null,
+): Promise<void> {
   try {
     const cacheObject: PlaylistCacheData = {
+      schemaVersion: PLAYLIST_CACHE_SCHEMA_VERSION,
       data,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      epgUrl: (epgUrl || '').trim() || null,
     };
     await localforage.setItem(getScopedCacheKey(scope), cacheObject);
     console.log('[Cache] Playlist salva no IndexedDB com sucesso.');

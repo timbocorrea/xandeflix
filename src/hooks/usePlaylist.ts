@@ -1,7 +1,14 @@
 import { useCallback, useState } from 'react';
+import { Category } from '../types';
 import { useStore } from '../store/useStore';
 import { MOCK_CATEGORIES } from '../mock/data';
-import { buildPlaylistCacheScope, getPlaylistCache, savePlaylistCache } from '../lib/localCache';
+import {
+  PLAYLIST_CACHE_SCHEMA_VERSION,
+  buildPlaylistCacheScope,
+  getPlaylistCache,
+  savePlaylistCache,
+} from '../lib/localCache';
+import { parseXMLTV } from '../lib/epgParser';
 
 export type PlaylistStatus =
   | 'idle'
@@ -17,6 +24,11 @@ export interface PlaylistError {
   message: string;
   details?: string;
   playlistUrl?: string;
+}
+
+interface WorkerParseResult {
+  categories: Category[];
+  epgUrl: string | null;
 }
 
 function describePlaylistSource(playlistUrl: string): string {
@@ -35,6 +47,35 @@ export const usePlaylist = () => {
   const setAllCategories = useStore((state) => state.setAllCategories);
   const setIsUsingMock = useStore((state) => state.setIsUsingMock);
   const setAdultAccessSettings = useStore((state) => state.setAdultAccessSettings);
+  const setEpgData = useStore((state) => state.setEpgData);
+
+  const hydrateEpgData = useCallback(
+    async (epgUrl: string | null, authToken: string) => {
+      if (!epgUrl) {
+        setEpgData(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/proxy-playlist?url=${encodeURIComponent(epgUrl)}`, {
+          headers: {
+            'x-auth-token': authToken,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const xmlText = await response.text();
+        setEpgData(parseXMLTV(xmlText));
+      } catch (error) {
+        console.warn('[EPG] Falha ao carregar a grade:', error);
+        setEpgData(null);
+      }
+    },
+    [setEpgData],
+  );
 
   const fetchPlaylist = useCallback(async () => {
     const hasData = useStore.getState().allCategories.length > 0;
@@ -49,6 +90,7 @@ export const usePlaylist = () => {
     let hasValidatedUser = false;
 
     if (authRole === 'admin') {
+      setEpgData(null);
       setLoading(false);
       setPlaylistStatus('idle');
       return;
@@ -78,11 +120,16 @@ export const usePlaylist = () => {
 
       playlistUrl = userData.playlistUrl;
       cacheScope = buildPlaylistCacheScope(userData.id || 'anonymous', playlistUrl);
+      setEpgData(null);
 
       const cached = await getPlaylistCache(cacheScope);
       const CACHE_EXPIRATION_MS = 12 * 60 * 60 * 1000;
+      const hasFreshCache =
+        Boolean(cached) &&
+        Date.now() - cached!.timestamp < CACHE_EXPIRATION_MS &&
+        cached!.schemaVersion === PLAYLIST_CACHE_SCHEMA_VERSION;
 
-      if (cached && Date.now() - cached.timestamp < CACHE_EXPIRATION_MS) {
+      if (hasFreshCache && cached) {
         console.log(
           `[Playlist] Cache (IndexedDB) valido encontrado: ${cached.data.length} categorias de ${new Date(cached.timestamp).toLocaleTimeString()}.`,
         );
@@ -90,6 +137,7 @@ export const usePlaylist = () => {
         setIsUsingMock(false);
         setPlaylistStatus('success');
         setPlaylistSource(describePlaylistSource(playlistUrl));
+        void hydrateEpgData(cached.epgUrl || null, authToken);
         setLoading(false);
         return;
       }
@@ -125,7 +173,7 @@ export const usePlaylist = () => {
 
       console.log('[Playlist] Conteudo baixado. Delegando processamento para o Web Worker...');
 
-      const parsedCategories = await new Promise<any[]>((resolve, reject) => {
+      const parsedPlaylist = await new Promise<WorkerParseResult>((resolve, reject) => {
         const worker = new Worker(new URL('../workers/m3u.worker.ts', import.meta.url), {
           type: 'module'
         });
@@ -149,19 +197,21 @@ export const usePlaylist = () => {
         worker.postMessage({ m3uText: m3uRawText });
       });
 
-      if (parsedCategories.length > 0) {
-        await savePlaylistCache(parsedCategories, cacheScope);
+      if (parsedPlaylist.categories.length > 0) {
+        await savePlaylistCache(parsedPlaylist.categories, cacheScope, parsedPlaylist.epgUrl);
 
-        setAllCategories(parsedCategories);
+        setAllCategories(parsedPlaylist.categories);
         setIsUsingMock(false);
         setPlaylistStatus('success');
+        void hydrateEpgData(parsedPlaylist.epgUrl, authToken);
         console.log(
-          `[Playlist] Processado em background: ${parsedCategories.length} categorias (cache atualizado).`,
+          `[Playlist] Processado em background: ${parsedPlaylist.categories.length} categorias (cache atualizado).`,
         );
       } else if (!hasData) {
         console.warn('[Playlist] Resposta vazia ou invalida. Usando dados MOCK.');
         setAllCategories(MOCK_CATEGORIES);
         setIsUsingMock(true);
+        setEpgData(null);
         setPlaylistStatus('mock_fallback');
         setPlaylistError({
           status: 'mock_fallback',
@@ -191,6 +241,7 @@ export const usePlaylist = () => {
       if (!hasData && hasValidatedUser) {
         setAllCategories(MOCK_CATEGORIES);
         setIsUsingMock(true);
+        setEpgData(null);
         setPlaylistStatus('mock_fallback');
       } else {
         setPlaylistStatus(errorStatus);
@@ -198,7 +249,7 @@ export const usePlaylist = () => {
     } finally {
       setLoading(false);
     }
-  }, [setAdultAccessSettings, setAllCategories, setIsUsingMock]);
+  }, [hydrateEpgData, setAdultAccessSettings, setAllCategories, setEpgData, setIsUsingMock]);
 
   return { fetchPlaylist, loading, playlistStatus, playlistError, playlistSource };
 };

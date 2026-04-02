@@ -44,10 +44,11 @@ export interface Category {
 }
 
 export interface EPGProgram {
+  id: string;
+  start: number;
+  stop: number;
   title: string;
-  start: string;
-  stop: string;
-  desc: string;
+  description: string;
 }
 
 export interface User {

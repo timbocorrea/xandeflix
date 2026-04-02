@@ -4,7 +4,7 @@ function normalizeText(value: string | null | undefined): string {
   return (value || '').trim();
 }
 
-function parseXmltvDate(value: string | null): Date | null {
+function parseXmltvTimestamp(value: string | null): number | null {
   const rawValue = normalizeText(value);
   if (!rawValue) {
     return null;
@@ -29,7 +29,7 @@ function parseXmltvDate(value: string | null): Date | null {
   );
 
   if (!zone || zone === 'Z') {
-    return new Date(baseUtcTime);
+    return baseUtcTime;
   }
 
   const sign = zone.startsWith('-') ? -1 : 1;
@@ -37,79 +37,56 @@ function parseXmltvDate(value: string | null): Date | null {
   const offsetMinutes = Number(zone.slice(3, 5));
   const offsetMs = sign * ((offsetHours * 60) + offsetMinutes) * 60 * 1000;
 
-  return new Date(baseUtcTime - offsetMs);
+  return baseUtcTime - offsetMs;
 }
 
-function isSameLocalDay(date: Date, targetDate: Date): boolean {
-  return (
-    date.getFullYear() === targetDate.getFullYear() &&
-    date.getMonth() === targetDate.getMonth() &&
-    date.getDate() === targetDate.getDate()
-  );
-}
-
-export class EPGParser {
-  public static parse(xmltvRaw: string, targetDate = new Date()): Record<string, EPGProgram[]> {
-    const xmlSource = normalizeText(xmltvRaw);
-    if (!xmlSource || typeof DOMParser === 'undefined') {
-      return {};
-    }
-
-    const parser = new DOMParser();
-    const xml = parser.parseFromString(xmlSource, 'application/xml');
-    const parserError = xml.querySelector('parsererror');
-
-    if (parserError) {
-      console.warn('[EPG] XMLTV invalido:', parserError.textContent || 'parsererror');
-      return {};
-    }
-
-    const channelMap: Record<string, EPGProgram[]> = {};
-    const channelNodes = Array.from(xml.getElementsByTagName('channel'));
-
-    channelNodes.forEach((channelNode) => {
-      const channelId = normalizeText(channelNode.getAttribute('id'));
-      if (channelId && !channelMap[channelId]) {
-        channelMap[channelId] = [];
-      }
-    });
-
-    const programmeNodes = Array.from(xml.getElementsByTagName('programme'));
-
-    programmeNodes.forEach((programmeNode) => {
-      const channelId = normalizeText(programmeNode.getAttribute('channel'));
-      if (!channelId) {
-        return;
-      }
-
-      const startDate = parseXmltvDate(programmeNode.getAttribute('start'));
-      const stopDate = parseXmltvDate(programmeNode.getAttribute('stop'));
-
-      if (!startDate || !isSameLocalDay(startDate, targetDate)) {
-        return;
-      }
-
-      if (!channelMap[channelId]) {
-        channelMap[channelId] = [];
-      }
-
-      const titleNode = programmeNode.getElementsByTagName('title')[0];
-      const descNode = programmeNode.getElementsByTagName('desc')[0];
-
-      channelMap[channelId].push({
-        title: normalizeText(titleNode?.textContent) || 'Programacao indisponivel',
-        start: startDate.toISOString(),
-        stop: stopDate?.toISOString() || startDate.toISOString(),
-        desc: normalizeText(descNode?.textContent),
-      });
-    });
-
-    Object.keys(channelMap).forEach((channelId) => {
-      channelMap[channelId].sort(
-        (left, right) => new Date(left.start).getTime() - new Date(right.start).getTime(),
-      );
-    });
-
-    return channelMap;
+export function parseXMLTV(xmlString: string): Record<string, EPGProgram[]> {
+  const xmlSource = normalizeText(xmlString);
+  if (!xmlSource || typeof DOMParser === 'undefined') {
+    return {};
   }
+
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(xmlSource, 'application/xml');
+  const parserError = xml.querySelector('parsererror');
+
+  if (parserError) {
+    console.warn('[EPG] XMLTV invalido:', parserError.textContent || 'parsererror');
+    return {};
+  }
+
+  const groupedPrograms: Record<string, EPGProgram[]> = {};
+  const programmeNodes = Array.from(xml.getElementsByTagName('programme'));
+
+  programmeNodes.forEach((programmeNode, index) => {
+    const channelId = normalizeText(programmeNode.getAttribute('channel'));
+    const start = parseXmltvTimestamp(programmeNode.getAttribute('start'));
+    const stop = parseXmltvTimestamp(programmeNode.getAttribute('stop'));
+
+    if (!channelId || start === null) {
+      return;
+    }
+
+    const titleNode = programmeNode.getElementsByTagName('title')[0];
+    const descNode = programmeNode.getElementsByTagName('desc')[0];
+    const title = normalizeText(titleNode?.textContent) || 'Programacao indisponivel';
+
+    if (!groupedPrograms[channelId]) {
+      groupedPrograms[channelId] = [];
+    }
+
+    groupedPrograms[channelId].push({
+      id: `${channelId}:${start}:${index}`,
+      start,
+      stop: stop ?? start,
+      title,
+      description: normalizeText(descNode?.textContent),
+    });
+  });
+
+  Object.keys(groupedPrograms).forEach((channelId) => {
+    groupedPrograms[channelId].sort((left, right) => left.start - right.start);
+  });
+
+  return groupedPrograms;
 }

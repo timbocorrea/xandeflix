@@ -18,6 +18,7 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, layout, externalMedia, isGlobalPlayerActive }) => {
   const favorites = useStore((state) => state.favorites);
+  const epgData = useStore((state) => state.epgData);
   const liveCategories = useMemo(() => 
     categories.filter(c => c.type === 'live' && c.items.length > 0), 
     [categories]
@@ -28,6 +29,15 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
   const [previewMedia, setPreviewMedia] = useState<Media | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   // Sincronizar com media externa (vindo de "minimizar" o player global)
   useEffect(() => {
@@ -143,6 +153,13 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
             const isFavorite =
               favorites.includes(media.videoUrl || `media:${media.id}`) ||
               favorites.includes(media.id);
+            const channelPrograms =
+              (media.tvgId && epgData?.[media.tvgId]) ||
+              (media.tvgName && epgData?.[media.tvgName]) ||
+              [];
+            const currentProgram = channelPrograms.find(
+              (program) => now >= program.start && now < program.stop
+            );
 
             return (
               <TouchableHighlight
@@ -172,6 +189,11 @@ export const LiveTVGrid: React.FC<LiveTVGridProps> = ({ categories, onPlayFull, 
                     <Text style={[styles.channelTitle, selectedMediaId === media.id && styles.channelTitleActive]} numberOfLines={1}>
                       {media.title}
                     </Text>
+                    {currentProgram && (
+                      <Text style={styles.channelProgram} numberOfLines={1}>
+                        {currentProgram.title}
+                      </Text>
+                    )}
                     <Text style={styles.channelSubtitle} numberOfLines={1}>
                       {media.category}
                     </Text>
@@ -392,6 +414,12 @@ const styles = StyleSheet.create({
   channelSubtitle: {
     color: 'rgba(255,255,255,0.3)',
     fontSize: 11,
+    fontFamily: 'Outfit',
+  },
+  channelProgram: {
+    color: 'rgba(255,255,255,0.62)',
+    fontSize: 12,
+    fontWeight: '600',
     fontFamily: 'Outfit',
   },
   playingIndicator: {

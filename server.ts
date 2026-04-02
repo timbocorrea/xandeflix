@@ -95,6 +95,61 @@ function getUrlHostLabel(targetUrl: string): string {
   }
 }
 
+function extractUrlTvgFromM3u(rawText: string): string | null {
+  const firstNonEmptyLine = rawText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  if (!firstNonEmptyLine || !firstNonEmptyLine.toUpperCase().startsWith('#EXTM3U')) {
+    return null;
+  }
+
+  const match = firstNonEmptyLine.match(/\burl-tvg=(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+  return (match?.[1] || match?.[2] || match?.[3] || '').trim() || null;
+}
+
+async function resolveAuthorizedUserResourceUrl(
+  requestedUrl: string,
+  userPlaylistUrl: string,
+): Promise<string | null> {
+  if (!requestedUrl) {
+    return userPlaylistUrl;
+  }
+
+  if (!isRemoteHttpUrl(requestedUrl)) {
+    return null;
+  }
+
+  if (requestedUrl === userPlaylistUrl || isAllowedPlaylistUrl(requestedUrl)) {
+    return requestedUrl;
+  }
+
+  try {
+    const response = await axios.get(userPlaylistUrl, {
+      timeout: 15000,
+      responseType: 'text',
+      headers: {
+        'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+        'Accept': '*/*',
+      }
+    });
+
+    const epgUrl = extractUrlTvgFromM3u(typeof response.data === 'string' ? response.data : '');
+    if (epgUrl && epgUrl === requestedUrl && isRemoteHttpUrl(epgUrl)) {
+      registerAuthorizedDomainFromUrl(epgUrl);
+      return epgUrl;
+    }
+  } catch (error) {
+    console.warn(
+      `[SECURITY] Failed to validate requested proxy URL against user playlist host ${getUrlHostLabel(userPlaylistUrl)}:`,
+      error,
+    );
+  }
+
+  return null;
+}
+
 async function isKnownManagedPlaylistUrl(targetUrl: string): Promise<boolean> {
   const normalizedTarget = targetUrl.trim();
   if (!normalizedTarget) return false;
@@ -209,14 +264,15 @@ app.get('/api/proxy-playlist', async (req, res) => {
         return res.status(401).json({ error: 'Sessao invalida ou nao autorizado' });
       }
 
-      if (requestedUrl && requestedUrl !== user.playlistUrl) {
+      const resolvedUserUrl = await resolveAuthorizedUserResourceUrl(requestedUrl, user.playlistUrl);
+      if (!resolvedUserUrl) {
         return res.status(403).json({
           error: 'Forbidden',
-          message: 'Usuarios so podem acessar a propria playlist.',
+          message: 'A URL solicitada nao esta autorizada para este usuario.',
         });
       }
 
-      playlistUrl = user.playlistUrl;
+      playlistUrl = resolvedUserUrl;
     }
 
     if (!playlistUrl) {
@@ -256,6 +312,13 @@ app.get('/api/proxy-playlist', async (req, res) => {
         'Accept': '*/*',
       }
     });
+
+    if (typeof response.data === 'string') {
+      const epgUrl = extractUrlTvgFromM3u(response.data);
+      if (epgUrl && isRemoteHttpUrl(epgUrl)) {
+        registerAuthorizedDomainFromUrl(epgUrl);
+      }
+    }
 
     res.header('Content-Type', 'text/plain');
     res.send(response.data);
