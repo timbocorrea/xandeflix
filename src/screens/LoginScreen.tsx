@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableHighlight, StyleSheet, ActivityIndicator } from 'react-native';
 import { motion, AnimatePresence } from 'motion/react';
-import { useStore } from '../store/useStore';
-import { apiFetch } from '../lib/api';
+import { authenticateWithSupabase, type SessionSnapshot } from '../lib/auth';
 
 interface LoginScreenProps {
-  onLoginSuccess: (playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => void;
+  onLoginSuccess: (snapshot: SessionSnapshot) => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
@@ -13,59 +12,39 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const { setIsAdminMode, setAdultAccessSettings } = useStore();
 
   const handleLogin = async () => {
     if (!identifier.trim()) {
-      setError('Informe seu ID de acesso.');
+      setError('Informe seu email ou ID de acesso.');
       return;
     }
-    
+
     setLoading(true);
     setError(null);
 
     try {
-      const response = await apiFetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: identifier.trim(), token: password })
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        setError(result.error || 'Credenciais inválidas.');
-        setLoading(false);
-        return;
-      }
-
-      if (result.type === 'admin') {
-        setAdultAccessSettings(null);
-        setIsAdminMode(true);
-        onLoginSuccess(undefined, undefined, result.sessionToken, 'admin');
-      } else if (result.type === 'user') {
-        setIsAdminMode(false);
-        setAdultAccessSettings(result.data?.adultAccess);
-        onLoginSuccess(result.data?.playlistUrl, result.data?.id, result.sessionToken, 'user');
-      }
+      const snapshot = await authenticateWithSupabase(identifier, password);
+      onLoginSuccess(snapshot);
     } catch (err: any) {
-      setError('Erro de conexão com o servidor.');
+      setError(err?.message || 'Nao foi possivel autenticar no Supabase.');
     } finally {
       setLoading(false);
     }
   };
 
-  const isAdmin = identifier.toLowerCase() === 'admin';
-
   return (
     <View style={styles.container}>
-      {/* Background Effect */}
-      <div 
+      <div
         style={{
-          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'radial-gradient(ellipse at 30% 20%, rgba(229,9,20,0.08) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(229,9,20,0.05) 0%, transparent 50%)',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background:
+            'radial-gradient(ellipse at 30% 20%, rgba(229,9,20,0.08) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(229,9,20,0.05) 0%, transparent 50%)',
           pointerEvents: 'none',
-        }} 
+        }}
       />
 
       <motion.div
@@ -74,26 +53,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         transition={{ duration: 0.6 }}
         style={{ width: '100%', maxWidth: 440, zIndex: 10 }}
       >
-        {/* Logo */}
         <Text style={styles.logo}>XANDEFLIX</Text>
         <Text style={styles.subtitle}>Streaming Premium</Text>
 
-        {/* Login Card */}
         <View style={styles.card}>
           <Text style={styles.title}>Entrar</Text>
           <Text style={styles.desc}>
-            {isAdmin ? 'Acesso administrativo ao painel de controle.' : 'Insira seu ID de acesso para começar a assistir.'}
+            Use seu email ou ID de acesso. No primeiro login por ID, a conta do Supabase sera vinculada automaticamente.
           </Text>
 
-          {/* Identifier Field */}
           <View style={styles.fieldGroup}>
-            <Text style={styles.label}>ID DE ACESSO</Text>
+            <Text style={styles.label}>EMAIL OU ID DE ACESSO</Text>
             <TextInput
               style={styles.input}
-              placeholder="Seu ID ou 'admin'"
+              placeholder="Seu email ou ID"
               placeholderTextColor="rgba(255,255,255,0.25)"
               value={identifier}
-              onChangeText={(text) => { setIdentifier(text); setError(null); }}
+              onChangeText={(text) => {
+                setIdentifier(text);
+                setError(null);
+              }}
               autoCapitalize="none"
               onSubmitEditing={handleLogin}
               // @ts-ignore
@@ -101,7 +80,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             />
           </View>
 
-          {/* Password Field */}
           <AnimatePresence>
             {identifier.length > 0 && (
               <motion.div
@@ -111,10 +89,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 transition={{ duration: 0.3 }}
               >
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>{isAdmin ? 'CHAVE MESTRA' : 'SENHA'}</Text>
+                  <Text style={styles.label}>SENHA</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder={isAdmin ? 'Senha do administrador' : 'Sua senha de acesso'}
+                    placeholder="Sua senha de acesso"
                     placeholderTextColor="rgba(255,255,255,0.25)"
                     value={password}
                     onChangeText={setPassword}
@@ -128,7 +106,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             )}
           </AnimatePresence>
 
-          {/* Error */}
           {error && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <View style={styles.errorContainer}>
@@ -137,7 +114,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             </motion.div>
           )}
 
-          {/* Submit */}
           <TouchableHighlight
             onPress={handleLogin}
             underlayColor="#B80710"
@@ -148,15 +124,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               {loading ? (
                 <ActivityIndicator color="white" size="small" />
               ) : (
-                <Text style={styles.buttonText}>
-                  {isAdmin ? 'Acessar Painel' : 'Começar a Assistir'}
-                </Text>
+                <Text style={styles.buttonText}>Comecar a Assistir</Text>
               )}
             </View>
           </TouchableHighlight>
         </View>
 
-        {/* Footer */}
         <Text style={styles.footer}>Xandeflix Premium © 2026</Text>
       </motion.div>
     </View>

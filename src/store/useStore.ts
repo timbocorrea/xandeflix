@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import type { ManagedUser } from '../lib/adminSupabase';
 import { Category, EPGProgram, Media } from '../types';
-import { supabase } from '../lib/supabase';
 
 export type AdultAccessState = {
   enabled: boolean;
@@ -56,8 +56,8 @@ interface XandeflixState {
 
   isAdminMode: boolean;
   setIsAdminMode: (mode: boolean) => void;
-  managedUsers: any[];
-  setManagedUsers: (users: any[]) => void;
+  managedUsers: ManagedUser[];
+  setManagedUsers: (users: ManagedUser[]) => void;
 
   adultAccess: AdultAccessState;
   setAdultAccessSettings: (settings?: Partial<AdultAccessState> | null) => void;

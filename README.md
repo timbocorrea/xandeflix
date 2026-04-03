@@ -1,20 +1,63 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Xandeflix
 
-# Run and deploy your AI Studio app
+Aplicativo Android-first em React + Capacitor para reproduzir listas IPTV direto no dispositivo, sem VPS para proxy de stream.
 
-This contains everything you need to run your app locally.
+## Arquitetura
 
-View your app in AI Studio: https://ai.studio/apps/8d2a5df7-b462-4c46-aeda-0d8642f6ae7f
+- `Android app`: autenticação, download nativo da playlist/EPG e reprodução no player nativo.
+- `Supabase`: auth, banco, preferências, catálogo resumido e telemetria.
+- `Vercel`: opcional para hospedar o painel web/admin.
 
-## Run Locally
+O fluxo de stream é direto entre o dispositivo e o provedor IPTV.
 
-**Prerequisites:**  Node.js
+## Desenvolvimento
 
+Pré-requisitos:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+- Node.js
+- Android Studio + SDK Android, se for testar no app nativo
+- projeto Supabase configurado
+
+Configuração mínima em `.env`:
+
+```env
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+VITE_TMDB_API_KEY=
+CAPACITOR_DEV_SERVER_URL=
+```
+
+Rodar o frontend web:
+
+```bash
+npm install
+npm run dev
+```
+
+Build web:
+
+```bash
+npm run build
+```
+
+Build Android:
+
+```bash
+npm run build:android
+```
+
+## SQL do Supabase
+
+Execute estes arquivos no SQL Editor do Supabase na ordem:
+
+1. `supabase_setup.sql`
+2. `supabase_repair_legacy_schema.sql` se a base for legada
+3. `supabase_seed_legacy.sql` se quiser migrar `users.json`
+4. `supabase_phase2_auth.sql`
+5. `supabase_phase6_adult_access.sql`
+
+## Observações
+
+- O backend Express legado foi removido do runtime.
+- O painel admin opera direto no Supabase.
+- O controle adulto final usa senha/PIN salvo no Supabase; o TOTP legado não faz mais parte do fluxo suportado.

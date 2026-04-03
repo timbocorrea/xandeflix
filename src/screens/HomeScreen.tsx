@@ -129,10 +129,16 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const scrollRef = useRef<ScrollView>(null);
   const searchInputRef = useRef<any>(null);
   const activePlayerRef = useRef<VideoPlayerHandle | null>(null);
+  const hasRequestedInitialPlaylistRef = useRef(false);
   
   // Initial Data Fetch
   useEffect(() => {
-    fetchPlaylist();
+    if (hasRequestedInitialPlaylistRef.current) {
+      return;
+    }
+
+    hasRequestedInitialPlaylistRef.current = true;
+    void fetchPlaylist();
   }, [fetchPlaylist]);
 
   useEffect(() => {
@@ -559,6 +565,13 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     () => filteredCategories.reduce((total, category) => total + category.items.length, 0),
     [filteredCategories]
   );
+  const hasBlockingPlaylistError =
+    !loading &&
+    allCategories.length === 0 &&
+    !!playlistError &&
+    (playlistError.status === 'error_no_content' ||
+      playlistError.status === 'error_playlist' ||
+      playlistError.status === 'error_auth');
 
   // Browse mode player dimensions
   const browsePlayerHeight = layout.isMobile
@@ -912,6 +925,82 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
         {!isSearchMode ? (
           loading && allCategories.length === 0 ? (
             <View style={{ height: 400, backgroundColor: '#111', borderRadius: 20, marginBottom: 40, opacity: 0.3 }} />
+          ) : hasBlockingPlaylistError ? (
+            <View
+              style={{
+                minHeight: layout.isCompact ? 280 : 360,
+                borderRadius: 24,
+                borderWidth: 1,
+                borderColor: 'rgba(239,68,68,0.18)',
+                backgroundColor: 'rgba(18,18,18,0.96)',
+                padding: layout.isCompact ? 24 : 36,
+                justifyContent: 'center',
+                marginBottom: 36,
+              }}
+            >
+              <Text
+                style={{
+                  color: '#fff',
+                  fontSize: layout.isCompact ? 24 : 32,
+                  fontWeight: '900',
+                  fontFamily: 'Outfit',
+                  marginBottom: 12,
+                }}
+              >
+                {playlistError?.message || 'Nao foi possivel carregar o conteudo.'}
+              </Text>
+              {playlistError?.details ? (
+                <Text
+                  style={{
+                    color: 'rgba(255,255,255,0.68)',
+                    fontSize: layout.isCompact ? 15 : 17,
+                    lineHeight: layout.isCompact ? 22 : 26,
+                    marginBottom: 16,
+                    fontFamily: 'Outfit',
+                  }}
+                >
+                  {playlistError.details}
+                </Text>
+              ) : null}
+              {playlistError?.playlistUrl ? (
+                <Text
+                  style={{
+                    color: 'rgba(255,255,255,0.42)',
+                    fontSize: 12,
+                    fontFamily: 'Outfit',
+                  }}
+                  numberOfLines={1}
+                >
+                  URL: {maskUrlCredentials(playlistError.playlistUrl)}
+                </Text>
+              ) : null}
+              <View
+                style={{
+                  marginTop: 22,
+                  flexDirection: 'row',
+                  flexWrap: 'wrap',
+                  gap: 12,
+                }}
+              >
+                <TouchableHighlight
+                  onPress={() => fetchPlaylist()}
+                  underlayColor="rgba(255,255,255,0.1)"
+                  style={styles.retryButton}
+                >
+                  <View style={styles.retryInner}>
+                    <span><RotateCcw size={14} color="white" /></span>
+                    <Text style={styles.retryText}>Tentar Novamente</Text>
+                  </View>
+                </TouchableHighlight>
+                <TouchableHighlight
+                  onPress={onLogout}
+                  underlayColor="rgba(229,9,20,0.3)"
+                  style={styles.errorLogoutButton}
+                >
+                  <Text style={styles.errorLogoutText}>Sair da conta</Text>
+                </TouchableHighlight>
+              </View>
+            </View>
           ) : hideHeroSection ? (
             null // Hide hero on live desktop view as we have the split column layout
           ) : (
@@ -957,6 +1046,12 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             [1, 2, 3].map((i) => (
               <CategoryRowSkeleton key={i} layout={layout} />
             ))
+          ) : hasBlockingPlaylistError ? (
+            <View style={[styles.emptyContainer, layout.isCompact && styles.emptyContainerCompact]}>
+              <Text style={[styles.emptyText, layout.isCompact && styles.emptyTextCompact]}>
+                Nenhum conteudo disponivel para esta conta no momento.
+              </Text>
+            </View>
           ) : activeFilter === 'live' && layout.isDesktop ? (
             <Suspense fallback={<View style={{ height: 400, flex: 1, backgroundColor: '#111', borderRadius: 20 }} />}>
               <LiveTVGrid 
@@ -1065,13 +1160,17 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
             {/* Error/Status Badge */}
             <View style={[
               styles.mockBadge, 
-              playlistError?.status === 'error_playlist' || playlistError?.status === 'error_auth' 
+              playlistError?.status === 'error_playlist' ||
+              playlistError?.status === 'error_auth' ||
+              playlistError?.status === 'error_no_content'
                 ? { backgroundColor: '#DC2626' } 
                 : { backgroundColor: '#EAB308' }
             ]}>
               <Text style={styles.mockBadgeText}>
                 {playlistError?.status === 'error_auth' 
                   ? '⚠ ERRO DE AUTENTICAÇÃO'
+                  : playlistError?.status === 'error_no_content'
+                  ? 'âš  SEM CONTEUDO CONFIGURADO'
                   : playlistError?.status === 'error_playlist'
                   ? '⚠ LISTA NÃO CARREGADA'
                   : playlistError?.status === 'mock_fallback'
@@ -1328,6 +1427,21 @@ const styles = StyleSheet.create({
   retryText: {
     color: 'white', 
     fontSize: 14, 
+    fontWeight: '900',
+    fontFamily: 'Outfit',
+  },
+  errorLogoutButton: {
+    backgroundColor: 'rgba(229,9,20,0.14)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(229,9,20,0.45)',
+    justifyContent: 'center',
+  },
+  errorLogoutText: {
+    color: '#FCA5A5',
+    fontSize: 14,
     fontWeight: '900',
     fontFamily: 'Outfit',
   },

@@ -1,56 +1,39 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Trash2, X, Edit2, Save, Eye, ChevronDown, ChevronRight, Folder, FolderOpen, Tv, Film, Clapperboard, FileVideo, Square, CheckSquare, Search, Image as ImageIcon, FileText } from 'lucide-react';
 import { useStore } from '../store/useStore';
-import { M3UParser } from '../lib/m3uParser';
+import {
+  createManagedUser,
+  deleteManagedUser,
+  getPlayerTelemetrySummary,
+  listManagedUsers,
+  saveManagedUserCatalogFilters,
+  setManagedUserBlocked,
+  updateManagedUser,
+  upsertGlobalMediaOverride,
+} from '../lib/adminSupabase';
+import type {
+  EditableManagedUser,
+  ManagedUser,
+  PlayerTelemetrySummary,
+} from '../lib/adminSupabase';
+import {
+  getPlaylistCatalogSnapshotForUser,
+  type PlaylistCatalogSnapshotCategory,
+} from '../lib/playlistCatalogSnapshot';
 import { maskUrlCredentials } from '../lib/securityUtils';
-import { apiFetch, fetchRemoteText, isPlaylistProxyEnabled } from '../lib/api';
+import { searchTMDB } from '../lib/tmdb';
 
 // Wrapper to isolate lucide icons from react-native-web's createElement
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{children}</span>
 );
 
-type PlayerTelemetryChannel = {
-  key: string;
-  mediaId: string;
-  mediaTitle: string;
-  mediaCategory: string;
-  streamHost: string;
-  sessions: number;
-  sampledReports: number;
-  watchSeconds: number;
-  bufferSeconds: number;
-  bufferEventCount: number;
-  stallRecoveryCount: number;
-  errorRecoveryCount: number;
-  endedRecoveryCount: number;
-  manualRetryCount: number;
-  qualityFallbackCount: number;
-  fatalErrorCount: number;
-  problemScore: number;
-};
-
-type PlayerTelemetrySummary = {
-  enabled: boolean;
-  windowHours: number;
-  storage: 'supabase' | 'unavailable';
-  setupRequired?: boolean;
-  message?: string;
-  overview: {
-    reportCount: number;
-    affectedChannels: number;
-    sampledReports: number;
-    watchSeconds: number;
-    bufferSeconds: number;
-    bufferEventCount: number;
-    stallRecoveryCount: number;
-    errorRecoveryCount: number;
-    endedRecoveryCount: number;
-    manualRetryCount: number;
-    qualityFallbackCount: number;
-    fatalErrorCount: number;
-  };
-  channels: PlayerTelemetryChannel[];
+type PreviewSnapshotMeta = {
+  generatedAt: string;
+  categoryCount: number;
+  itemCount: number;
+  sampleItemLimit: number;
+  isStale: boolean;
 };
 
 function formatSeconds(totalSeconds: number) {
@@ -69,7 +52,6 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   const [telemetrySummary, setTelemetrySummary] = useState<PlayerTelemetrySummary | null>(null);
   const [telemetryLoading, setTelemetryLoading] = useState(true);
   const [telemetryError, setTelemetryError] = useState<string | null>(null);
-  const authToken = localStorage.getItem('xandeflix_auth_token') || '';
   
   // New User Form State
   const [newUserName, setNewUserName] = useState('');
@@ -78,12 +60,14 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   const [newUserPassword, setNewUserPassword] = useState('');
   
   // Modal State for editing
-  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [editingUser, setEditingUser] = useState<EditableManagedUser | null>(null);
 
   // Modal State for Preview (Tree view)
-  const [previewingUser, setPreviewingUser] = useState<any | null>(null);
-  const [previewCategories, setPreviewCategories] = useState<any[] | null>(null);
+  const [previewingUser, setPreviewingUser] = useState<ManagedUser | null>(null);
+  const [previewCategories, setPreviewCategories] = useState<PlaylistCatalogSnapshotCategory[] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewNotice, setPreviewNotice] = useState<string | null>(null);
+  const [previewMeta, setPreviewMeta] = useState<PreviewSnapshotMeta | null>(null);
   const [expandedRoot, setExpandedRoot] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [hiddenCategories, setHiddenCategories] = useState<string[]>([]);
@@ -97,9 +81,11 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
   const [tmdbSearchResults, setTmdbSearchResults] = useState<any[]>([]);
   const [tmdbSearching, setTmdbSearching] = useState(false);
 
-  const handlePreviewUser = async (user: any) => {
+  const handlePreviewUser = async (user: ManagedUser) => {
     setPreviewingUser(user);
     setPreviewCategories(null);
+    setPreviewNotice(null);
+    setPreviewMeta(null);
     setExpandedRoot(null);
     setExpandedCategory(null);
     setHiddenCategories(user.hiddenCategories || []);
@@ -107,24 +93,33 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setMediaOverrides(user.mediaOverrides || {});
     setPreviewLoading(true);
     try {
-      let m3uText = '';
+      const snapshot = await getPlaylistCatalogSnapshotForUser(user.id);
 
-      if (!isPlaylistProxyEnabled()) {
-        m3uText = await fetchRemoteText(user.playlistUrl, {
-          timeoutMs: 60000,
-        });
-      } else {
-        const response = await apiFetch(`/api/proxy-playlist?url=${encodeURIComponent(user.playlistUrl)}`, {
-          headers: { 'x-auth-token': authToken }
-        });
-        if (!response.ok) {
-          throw new Error('Nao foi possivel carregar o arquivo da lista atraves do proxy.');
-        }
-        m3uText = await response.text();
+      if (!snapshot) {
+        setPreviewCategories([]);
+        setPreviewNotice(
+          'Nenhum snapshot do catalogo foi sincronizado ainda. Abra o app Android com este usuario para gerar o preview.',
+        );
+        return;
       }
 
-      const parsedCategories = M3UParser.parse(m3uText);
-      setPreviewCategories(parsedCategories);
+      const isStale =
+        Boolean(user.playlistUrl) &&
+        snapshot.playlistUrl.trim() !== user.playlistUrl.trim();
+
+      setPreviewMeta({
+        generatedAt: snapshot.generatedAt,
+        categoryCount: snapshot.categoryCount,
+        itemCount: snapshot.itemCount,
+        sampleItemLimit: snapshot.snapshot.sampleItemLimit,
+        isStale,
+      });
+      setPreviewCategories(snapshot.snapshot.categories);
+      setPreviewNotice(
+        isStale
+          ? 'O snapshot exibido pertence a uma playlist antiga. Abra o app Android deste usuario para sincronizar a URL atual.'
+          : null,
+      );
     } catch (err: any) {
       alert(err.message);
       setPreviewingUser(null);
@@ -137,31 +132,18 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     if (!previewingUser) return;
     setSavingHidden(true);
     try {
-      const [hiddenRes, overridesRes] = await Promise.all([
-        apiFetch(`/api/admin/user/${previewingUser.id}/hiddenCategories`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-          body: JSON.stringify({ categories: hiddenCategories })
-        }),
-        apiFetch(`/api/admin/user/${previewingUser.id}/categoryOverrides`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-          body: JSON.stringify({ overrides: categoryOverrides })
-        }),
-        apiFetch(`/api/admin/user/${previewingUser.id}/mediaOverrides`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-          body: JSON.stringify({ overrides: mediaOverrides })
-        })
-      ]);
+      const updatedUser = await saveManagedUserCatalogFilters(previewingUser.id, {
+        hiddenCategories,
+        categoryOverrides,
+        mediaOverrides,
+      });
 
-      if (!hiddenRes.ok || !overridesRes.ok) throw new Error('Não foi possível salvar os filtros remotos.');
-      
-      const updatedManagedUsers = managedUsers.map(u => 
-        u.id === previewingUser.id ? { ...u, hiddenCategories, categoryOverrides, mediaOverrides } : u
+      const updatedManagedUsers = managedUsers.map((user) =>
+        user.id === previewingUser.id ? updatedUser : user,
       );
       setManagedUsers(updatedManagedUsers);
-      alert('Filtros e modificações salvos com sucesso!');
+      setPreviewingUser(updatedUser);
+      alert('Filtros e modificacoes salvos com sucesso!');
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -171,29 +153,19 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
 
   const toggleCategoryVisibility = (catId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setHiddenCategories(prev => 
-      prev.includes(catId) ? prev.filter(id => id !== catId) : [...prev, catId]
+    setHiddenCategories((prev) =>
+      prev.includes(catId) ? prev.filter((id) => id !== catId) : [...prev, catId],
     );
   };
-
-  const readErrorMessage = useCallback(async (response: Response, fallback: string) => {
-    try {
-      const data = await response.json();
-      return data?.error || data?.message || fallback;
-    } catch {
-      return fallback;
-    }
-  }, []);
 
   const searchTmdb = async (query: string, type: 'movie' | 'series') => {
     if (!query) return;
     setTmdbSearching(true);
     try {
-      const resp = await apiFetch(`/api/tmdb/search?query=${encodeURIComponent(query)}&type=${type}`);
-      const data = await resp.json();
-      setTmdbSearchResults(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error('TMDB Search Error:', e);
+      const data = await searchTMDB(query, type);
+      setTmdbSearchResults(data);
+    } catch (err) {
+      console.error('TMDB Search Error:', err);
     } finally {
       setTmdbSearching(false);
     }
@@ -204,19 +176,20 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     const updated = {
       ...editingItem,
       title: meta.title,
-      thumbnail: meta.poster_path ? `https://image.tmdb.org/t/p/w500${meta.poster_path}` : editingItem.thumbnail,
+      thumbnail: meta.poster_path
+        ? `https://image.tmdb.org/t/p/w500${meta.poster_path}`
+        : editingItem.thumbnail,
       description: meta.overview || editingItem.description,
     };
     setEditingItem(updated);
-    
-    // Auto save to local mediaOverrides
-    setMediaOverrides(prev => ({
+
+    setMediaOverrides((prev) => ({
       ...prev,
       [editingItem.url]: {
         title: updated.title,
         thumbnail: updated.thumbnail,
-        description: updated.description
-      }
+        description: updated.description,
+      },
     }));
     setTmdbSearchResults([]);
   };
@@ -225,12 +198,12 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     if (!editingItem) return;
     const updated = { ...editingItem, [field]: value };
     setEditingItem(updated);
-    setMediaOverrides(prev => ({
+    setMediaOverrides((prev) => ({
       ...prev,
       [editingItem.url]: {
         ...prev[editingItem.url],
-        [field]: value
-      }
+        [field]: value,
+      },
     }));
   };
 
@@ -238,39 +211,27 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setLoading(true);
     setError(null);
     try {
-      const response = await apiFetch('/api/admin/users', {
-        headers: { 'x-admin-token': authToken }
-      });
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Não foi possível carregar os usuários.'));
-      }
-      const data = await response.json();
-      setManagedUsers(data);
+      const users = await listManagedUsers();
+      setManagedUsers(users);
     } catch (err: any) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [setManagedUsers, authToken, readErrorMessage]);
+  }, [setManagedUsers]);
 
   const fetchTelemetry = useCallback(async () => {
     setTelemetryLoading(true);
     setTelemetryError(null);
     try {
-      const response = await apiFetch('/api/admin/player-telemetry?hours=24', {
-        headers: { 'x-admin-token': authToken }
-      });
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Nao foi possivel carregar a telemetria do player.'));
-      }
-      const data = await response.json();
-      setTelemetrySummary(data);
+      const summary = await getPlayerTelemetrySummary(24);
+      setTelemetrySummary(summary);
     } catch (err: any) {
       setTelemetryError(err.message);
     } finally {
       setTelemetryLoading(false);
     }
-  }, [authToken, readErrorMessage]);
+  }, []);
 
   useEffect(() => {
     fetchUsers();
@@ -281,20 +242,14 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setActionLoading(userId);
     setError(null);
     try {
-      const response = await apiFetch('/api/admin/user/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-        body: JSON.stringify({ userId, blocked: !currentStatus })
-      });
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Não foi possível atualizar o status.'));
-      }
+      await setManagedUserBlocked(userId, !currentStatus);
       await fetchUsers();
     } catch (err: any) {
       setError(err.message);
       console.error(err);
-    } 
-    finally { setActionLoading(null); }
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleAddUser = async () => {
@@ -302,19 +257,12 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setLoading(true);
     setError(null);
     try {
-      const response = await apiFetch('/api/admin/user/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-        body: JSON.stringify({ 
-          name: newUserName, 
-          playlistUrl: newUserUrl,
-          username: newUserUsername,
-          password: newUserPassword 
-        })
+      await createManagedUser({
+        name: newUserName,
+        playlistUrl: newUserUrl,
+        username: newUserUsername,
+        password: newUserPassword,
       });
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Não foi possível criar o usuário.'));
-      }
       setNewUserName('');
       setNewUserUrl('');
       setNewUserUsername('');
@@ -323,8 +271,9 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     } catch (err: any) {
       setError(err.message);
       console.error(err);
-    } 
-    finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDeleteUser = async (userId: string) => {
@@ -332,19 +281,14 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setActionLoading(userId);
     setError(null);
     try {
-      const response = await apiFetch(`/api/admin/user/${userId}`, {
-        method: 'DELETE',
-        headers: { 'x-admin-token': authToken }
-      });
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Não foi possível remover o usuário.'));
-      }
+      await deleteManagedUser(userId);
       await fetchUsers();
     } catch (err: any) {
       setError(err.message);
       console.error(err);
-    } 
-    finally { setActionLoading(null); }
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleUpdateUser = async () => {
@@ -352,29 +296,21 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setActionLoading(editingUser.id);
     setError(null);
     try {
-      const response = await apiFetch('/api/admin/user/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-        body: JSON.stringify({ 
-          userId: editingUser.id, 
-          name: editingUser.name,
-          username: editingUser.username,
-          password: editingUser.password,
-          playlistUrl: editingUser.playlistUrl 
-        })
+      await updateManagedUser(editingUser.id, {
+        name: editingUser.name,
+        username: editingUser.username,
+        password: editingUser.password,
+        playlistUrl: editingUser.playlistUrl,
       });
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Não foi possível salvar as alterações.'));
-      }
       setEditingUser(null);
       await fetchUsers();
     } catch (err: any) {
       setError(err.message);
       console.error(err);
-    } 
-    finally { setActionLoading(null); }
+    } finally {
+      setActionLoading(null);
+    }
   };
-
   return (
     <div style={s.container}>
       {/* Sidebar */}
@@ -552,7 +488,7 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                   <span style={{ ...s.columnLabel, flex: 1, textAlign: 'right' as const }}>AÇÕES</span>
                 </div>
 
-                {managedUsers.map((user: any) => (
+                {managedUsers.map((user) => (
                   <div key={user.id} style={s.tableRow}>
                     <div style={{ flex: 1.5 }}>
                       <div style={s.userName}>{user.name}</div>
@@ -702,8 +638,31 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 60, gap: 16 }}>
                     <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16 }}>Processando e analisando a lista M3U (isso pode demorar vários segundos)...</span>
                  </div>
+              ) : previewNotice && (!previewCategories || previewCategories.length === 0) ? (
+                 <div style={{ textAlign: 'center', padding: 40, color: 'rgba(255,255,255,0.4)' }}>
+                    {previewNotice}
+                 </div>
               ) : previewCategories && previewCategories.length > 0 ? (
                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {(previewMeta || previewNotice) && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+                        {previewNotice && (
+                          <div style={previewMeta?.isStale ? s.telemetrySetupBanner : s.telemetryInfoBanner}>
+                            {previewNotice}
+                          </div>
+                        )}
+                        {previewMeta && (
+                          <div style={s.telemetryMetaRow}>
+                            <div style={s.telemetryMetaPill}>Pastas: {previewMeta.categoryCount}</div>
+                            <div style={s.telemetryMetaPill}>Itens catalogados: {previewMeta.itemCount}</div>
+                            <div style={s.telemetryMetaPill}>Amostra por pasta: {previewMeta.sampleItemLimit}</div>
+                            <div style={s.telemetryMetaPill}>
+                              Sincronizado em: {new Date(previewMeta.generatedAt).toLocaleString()}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {[
                       { id: 'live', label: 'TV AO VIVO', icon: <Tv size={18} />, color: '#F87171', bg: 'rgba(239,68,68,0.1)' },
                       { id: 'series', label: 'SÉRIES', icon: <Clapperboard size={18} />, color: '#C084FC', bg: 'rgba(168,85,247,0.1)' },
@@ -999,22 +958,19 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
               </button>
               <button 
                 onClick={async () => { 
-                   if (isGlobalOverride && editingItem) {
-                     await apiFetch('/api/admin/globalMediaOverride', {
-                       method: 'POST',
-                       headers: { 'Content-Type': 'application/json', 'x-admin-token': authToken },
-                       body: JSON.stringify({
-                         itemTitle: editingItem.title,
-                         override: {
-                           title: editingItem.title,
-                           thumbnail: editingItem.thumbnail,
-                           description: editingItem.description
-                         }
-                       })
-                     });
+                   try {
+                     if (isGlobalOverride && editingItem) {
+                       await upsertGlobalMediaOverride(editingItem.title, {
+                         title: editingItem.title,
+                         thumbnail: editingItem.thumbnail,
+                         description: editingItem.description,
+                       });
+                     }
+                     setEditingItem(null); 
+                     setTmdbSearchResults([]); 
+                   } catch (err: any) {
+                     alert(err.message || 'Nao foi possivel salvar o override global.');
                    }
-                   setEditingItem(null); 
-                   setTmdbSearchResults([]); 
                 }} 
                 style={{ ...s.saveBtn, backgroundColor: '#3B82F6' }}
               >
@@ -1282,3 +1238,4 @@ const s: Record<string, React.CSSProperties> = {
   cancelBtn: { background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: '12px 20px', borderRadius: 10, cursor: 'pointer', fontWeight: 700, minHeight: 44 },
   saveBtn: { backgroundColor: '#E50914', border: 'none', color: 'white', padding: '12px 20px', borderRadius: 10, cursor: 'pointer', fontWeight: 900, display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 },
 };
+

@@ -1,23 +1,23 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { LoginScreen } from './screens/LoginScreen';
+import { getSessionSnapshot, signOutSupabaseSession, type SessionSnapshot } from './lib/auth';
+import { supabase } from './lib/supabase';
 import { useStore } from './store/useStore';
-import { apiFetch } from './lib/api';
 
 const HomeScreen = lazy(() => import('./screens/HomeScreen'));
 const AdminPanel = lazy(() =>
   import('./screens/AdminPanel').then((module) => ({ default: module.AdminPanel })),
 );
 
-const XANDEFLIX_LOCAL_STORAGE_KEYS = [
+const LEGACY_AUTH_STORAGE_KEYS = [
   'xandeflix_auth_token',
   'xandeflix_auth_role',
   'xandeflix_user_id',
   'xandeflix_session',
-  'xandeflix-app-storage',
 ] as const;
 
-function clearXandeflixStorage() {
-  XANDEFLIX_LOCAL_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+function clearLegacyAuthStorage() {
+  LEGACY_AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
 
   const sessionKeysToRemove: string[] = [];
   for (let index = 0; index < sessionStorage.length; index += 1) {
@@ -31,122 +31,131 @@ function clearXandeflixStorage() {
 }
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [sessionRole, setSessionRole] = useState<'admin' | 'user' | null>(null);
   const isAdminMode = useStore((state) => state.isAdminMode);
   const setIsAdminMode = useStore((state) => state.setIsAdminMode);
   const hydrateProfileState = useStore((state) => state.hydrateProfileState);
   const clearSessionState = useStore((state) => state.clearSessionState);
   const setAdultAccessSettings = useStore((state) => state.setAdultAccessSettings);
 
+  const resetSession = useCallback(() => {
+    clearLegacyAuthStorage();
+    setSessionRole(null);
+    setIsAdminMode(false);
+    setAdultAccessSettings(null);
+    clearSessionState();
+  }, [clearSessionState, setAdultAccessSettings, setIsAdminMode]);
+
+  const applySessionSnapshot = useCallback(
+    (snapshot: SessionSnapshot) => {
+      clearLegacyAuthStorage();
+      setSessionRole(snapshot.role);
+      setIsAdminMode(snapshot.role === 'admin');
+
+      if (snapshot.role === 'user' && snapshot.data) {
+        setAdultAccessSettings(snapshot.data.adultAccess);
+        hydrateProfileState(snapshot.data.id);
+      } else {
+        setAdultAccessSettings(null);
+        clearSessionState();
+      }
+    },
+    [clearSessionState, hydrateProfileState, setAdultAccessSettings, setIsAdminMode],
+  );
+
   useEffect(() => {
     let isMounted = true;
 
-    const clearStoredSession = () => {
-      clearXandeflixStorage();
-      setIsAdminMode(false);
-      clearSessionState();
-    };
-
     const restoreSession = async () => {
-      const savedToken = localStorage.getItem('xandeflix_auth_token');
-      if (!savedToken) {
-        clearSessionState();
-        if (isMounted) {
-          setIsAuthenticated(false);
-          setIsReady(true);
-        }
+      const snapshot = await getSessionSnapshot();
+
+      if (!isMounted) {
         return;
       }
 
-      try {
-        const response = await apiFetch('/api/auth/session', {
-          headers: { 'x-auth-token': savedToken }
-        });
-
-        if (!response.ok) {
-          throw new Error('Invalid session');
-        }
-
-        const session = await response.json();
-        const role = session.role === 'admin' ? 'admin' : 'user';
-
-        localStorage.setItem('xandeflix_auth_role', role);
-        setIsAdminMode(role === 'admin');
-
-        if (role === 'user' && session.data) {
-          if (session.data.id) localStorage.setItem('xandeflix_user_id', session.data.id);
-          else localStorage.removeItem('xandeflix_user_id');
-
-          setAdultAccessSettings(session.data.adultAccess);
-          hydrateProfileState(session.data.id);
-        } else {
-          localStorage.removeItem('xandeflix_user_id');
-          setAdultAccessSettings(null);
-          clearSessionState();
-        }
-
-        if (isMounted) {
-          setIsAuthenticated(true);
-        }
-      } catch {
-        clearStoredSession();
-        if (isMounted) {
-          setIsAuthenticated(false);
-        }
-      } finally {
-        if (isMounted) {
-          setIsReady(true);
-        }
+      if (!snapshot) {
+        resetSession();
+      } else {
+        applySessionSnapshot(snapshot);
       }
+
+      setIsReady(true);
     };
 
-    restoreSession();
+    void restoreSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) {
+        return;
+      }
+
+      if (!session) {
+        resetSession();
+        setIsReady(true);
+        return;
+      }
+
+      void getSessionSnapshot()
+        .then((snapshot) => {
+          if (!isMounted) {
+            return;
+          }
+
+          if (!snapshot) {
+            resetSession();
+          } else {
+            applySessionSnapshot(snapshot);
+          }
+
+          setIsReady(true);
+        })
+        .catch(() => {
+          if (!isMounted) {
+            return;
+          }
+
+          resetSession();
+          setIsReady(true);
+        });
+    });
 
     return () => {
       isMounted = false;
+      subscription.unsubscribe();
     };
-  }, [clearSessionState, hydrateProfileState, setAdultAccessSettings, setIsAdminMode]);
+  }, [applySessionSnapshot, resetSession]);
 
-  const handleLoginSuccess = (_playlistUrl?: string, userId?: string, authToken?: string, role?: 'admin' | 'user') => {
-    if (userId) localStorage.setItem('xandeflix_user_id', userId);
-    else localStorage.removeItem('xandeflix_user_id');
+  const handleLoginSuccess = useCallback(
+    (snapshot: SessionSnapshot) => {
+      applySessionSnapshot(snapshot);
+      setIsReady(true);
+    },
+    [applySessionSnapshot],
+  );
 
-    if (authToken) localStorage.setItem('xandeflix_auth_token', authToken);
-    if (role) {
-      localStorage.setItem('xandeflix_auth_role', role);
-      setIsAdminMode(role === 'admin');
-    }
+  const handleLogout = useCallback(() => {
+    resetSession();
+    setIsReady(true);
+    void signOutSupabaseSession();
+  }, [resetSession]);
 
-    if (role === 'user') {
-      hydrateProfileState(userId);
-    } else {
-      localStorage.removeItem('xandeflix_user_id');
-      clearSessionState();
-    }
-    
-    localStorage.setItem('xandeflix_session', 'active');
-    setIsAuthenticated(true);
-  };
-
-  const handleLogout = () => {
-    clearXandeflixStorage();
-    setIsAdminMode(false);
-    clearSessionState();
-    setIsAuthenticated(false);
-  };
-
-  // When admin exits admin panel, check if there's a real user session
-  const handleExitAdmin = () => {
-    const role = localStorage.getItem('xandeflix_auth_role');
-    if (role === 'user') {
+  const handleExitAdmin = useCallback(() => {
+    if (sessionRole === 'user') {
       setIsAdminMode(false);
-    } else {
-      handleLogout();
+      return;
     }
-  };
 
-  if (!isReady) return null;
+    handleLogout();
+  }, [handleLogout, sessionRole, setIsAdminMode]);
+
+  const isAuthenticated = sessionRole !== null;
+
+  if (!isReady) {
+    return null;
+  }
 
   return (
     <div className="w-full h-full bg-[#050505]">

@@ -1,21 +1,13 @@
 import { useState, useEffect } from 'react';
 import { cleanMediaTitle } from '../lib/titleCleaner';
-import { apiFetch, buildApiUrl } from '../lib/api';
-
-interface TMDBData {
-  description: string;
-  thumbnail: string;
-  backdrop: string;
-  year: number;
-  rating: string;
-}
+import { fetchTMDBMetadata, isTMDBConfigured, type TMDBData } from '../lib/tmdb';
 
 // Memory cache to avoid repeated requests for the same raw title
 const tmdbCache = new Map<string, TMDBData | null>();
 const inFlightRequests = new Map<string, Promise<TMDBData | null>>();
 
 /**
- * Custom hook to fetch rich metadata from TMDB via our local backend API.
+ * Custom hook to fetch rich metadata from TMDB directly from the client.
  * Optimized with title cleaning and local caching.
  * 
  * @param title The RAW media title from the IPTV list
@@ -54,23 +46,18 @@ export const useTMDB = (title: string | undefined, type: string | undefined) => 
       setError(null);
       
       try {
-        let apiUrl = `/api/metadata?title=${encodeURIComponent(normalizedTitle)}&type=${type}`;
-        if (year) {
-          apiUrl += `&year=${year}`;
-        }
-        apiUrl = buildApiUrl(apiUrl);
-
         let request = inFlightRequests.get(cacheKey);
         if (!request) {
           request = (async () => {
-            const response = await apiFetch(apiUrl);
-            
-            if (!response.ok) {
-              throw new Error('Failed to fetch metadata');
+            if (!isTMDBConfigured()) {
+              tmdbCache.set(cacheKey, null);
+              return null;
             }
-            
-            const metadata = await response.json();
-            const result = metadata || null;
+
+            const result = await fetchTMDBMetadata(
+              year ? `${normalizedTitle} (${year})` : normalizedTitle,
+              type as 'movie' | 'series',
+            );
             tmdbCache.set(cacheKey, result);
             return result;
           })();

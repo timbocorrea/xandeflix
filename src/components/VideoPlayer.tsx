@@ -222,7 +222,6 @@ export const VideoPlayer = React.forwardRef<VideoPlayerHandle, VideoPlayerProps>
         );
 
         sendPlayerTelemetryReport({
-          authToken: localStorage.getItem('xandeflix_auth_token') || undefined,
           mediaId: media?.id || url,
           mediaTitle: media?.title || 'Midia sem titulo',
           mediaCategory: media?.category || '',

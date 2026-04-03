@@ -1,120 +1,832 @@
--- =========================================================
--- CONFIGURACAO DO BANCO DE DADOS (XANDEFLIX) NO SUPABASE
--- Execute este script no "SQL Editor" do seu painel Supabase
--- =========================================================
+-- Xandeflix - Supabase Setup
+-- Execute este script no SQL Editor do Supabase antes da Fase 1.
+-- Ele prepara a base para a arquitetura final sem VPS:
+-- Auth + Postgres + RLS + tabelas para app/admin.
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+begin;
 
--- Criando a Tabela de Usuarios para substituir o users.json provisório
-CREATE TABLE IF NOT EXISTS public.xandeflix_users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    name TEXT NOT NULL,
-    playlist_url TEXT,
-    is_blocked BOOLEAN DEFAULT false,
-    last_access TIMESTAMP WITH TIME ZONE,
-    role TEXT DEFAULT 'user',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    hidden_categories JSONB DEFAULT '[]'::jsonb,
-    category_overrides JSONB DEFAULT '{}'::jsonb,
-    media_overrides JSONB DEFAULT '{}'::jsonb,
-    adult_password TEXT,
-    adult_totp_secret TEXT,
-    adult_totp_enabled BOOLEAN DEFAULT false
+create extension if not exists pgcrypto;
+create extension if not exists citext;
+
+-- -----------------------------------------------------------------------------
+-- Helpers
+-- -----------------------------------------------------------------------------
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = timezone('utc', now());
+  return new;
+end;
+$$;
+
+create or replace function public.xandeflix_jsonb_to_text_array(input jsonb)
+returns text[]
+language sql
+immutable
+as $$
+  select coalesce(array_agg(value), array[]::text[])
+  from jsonb_array_elements_text(coalesce(input, '[]'::jsonb)) as t(value);
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Main user profile table
+-- -----------------------------------------------------------------------------
+-- Mantemos o nome xandeflix_users para reduzir atrito com a base atual.
+-- O id continua independente de auth.users durante a transicao.
+-- O vinculo com Supabase Auth fica em auth_user_id.
+
+create table if not exists public.xandeflix_users (
+  id uuid primary key default gen_random_uuid(),
+  auth_user_id uuid unique references auth.users (id) on delete set null,
+  email citext unique,
+  access_id citext unique,
+  name text not null default '',
+  username citext unique,
+  password text,
+  playlist_url text not null default '',
+  is_blocked boolean not null default false,
+  role text not null default 'user' check (role in ('admin', 'user')),
+  last_access timestamptz,
+  hidden_categories text[] not null default '{}'::text[],
+  category_overrides jsonb not null default '{}'::jsonb,
+  media_overrides jsonb not null default '{}'::jsonb,
+  adult_password text,
+  adult_totp_secret text,
+  adult_totp_enabled boolean not null default false,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
 );
 
-ALTER TABLE public.xandeflix_users ADD COLUMN IF NOT EXISTS adult_password TEXT;
-ALTER TABLE public.xandeflix_users ADD COLUMN IF NOT EXISTS adult_totp_secret TEXT;
-ALTER TABLE public.xandeflix_users ADD COLUMN IF NOT EXISTS adult_totp_enabled BOOLEAN DEFAULT false;
+-- Compatibilidade com bases onde public.xandeflix_users ja existe sem os
+-- campos novos exigidos pela migracao para Supabase Auth.
+alter table public.xandeflix_users
+  add column if not exists auth_user_id uuid unique references auth.users (id) on delete set null;
 
--- Tabela para correções globais (aplicadas a todos os usuários que tiverem o mesmo nome de arquivo)
-CREATE TABLE IF NOT EXISTS public.global_media_overrides (
-    title_match TEXT PRIMARY KEY, -- Nome do arquivo em minúsculo e sem espaços extras
-    override_data JSONB NOT NULL, -- { title, thumbnail, description, etc }
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+alter table public.xandeflix_users
+  add column if not exists email citext unique;
 
--- Inserindo usuario administrador padrao com hash bcrypt compativel.
--- Lembre-se de trocar a senha apos o primeiro acesso.
-INSERT INTO public.xandeflix_users (username, password, name, role)
-VALUES (
-    'admin',
-    crypt('admin123', gen_salt('bf', 10)),
-    'Administrador Xandeflix',
-    'admin'
+alter table public.xandeflix_users
+  add column if not exists access_id citext unique;
+
+alter table public.xandeflix_users
+  add column if not exists name text not null default '';
+
+alter table public.xandeflix_users
+  add column if not exists username citext;
+
+alter table public.xandeflix_users
+  add column if not exists password text;
+
+alter table public.xandeflix_users
+  add column if not exists playlist_url text not null default '';
+
+alter table public.xandeflix_users
+  add column if not exists is_blocked boolean not null default false;
+
+alter table public.xandeflix_users
+  add column if not exists role text not null default 'user';
+
+alter table public.xandeflix_users
+  add column if not exists last_access timestamptz;
+
+alter table public.xandeflix_users
+  add column if not exists hidden_categories text[] not null default '{}'::text[];
+
+alter table public.xandeflix_users
+  add column if not exists category_overrides jsonb not null default '{}'::jsonb;
+
+alter table public.xandeflix_users
+  add column if not exists media_overrides jsonb not null default '{}'::jsonb;
+
+alter table public.xandeflix_users
+  add column if not exists adult_password text;
+
+alter table public.xandeflix_users
+  add column if not exists adult_totp_secret text;
+
+alter table public.xandeflix_users
+  add column if not exists adult_totp_enabled boolean not null default false;
+
+alter table public.xandeflix_users
+  add column if not exists created_at timestamptz not null default timezone('utc', now());
+
+alter table public.xandeflix_users
+  add column if not exists updated_at timestamptz not null default timezone('utc', now());
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'xandeflix_users'
+      and column_name = 'hidden_categories'
+      and udt_name = 'jsonb'
+  ) then
+    alter table public.xandeflix_users
+      alter column hidden_categories drop default;
+
+    alter table public.xandeflix_users
+      alter column hidden_categories type text[]
+      using public.xandeflix_jsonb_to_text_array(hidden_categories);
+
+    alter table public.xandeflix_users
+      alter column hidden_categories set default '{}'::text[];
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'xandeflix_users_role_check'
+      and conrelid = 'public.xandeflix_users'::regclass
+  ) then
+    alter table public.xandeflix_users
+      add constraint xandeflix_users_role_check
+      check (role in ('admin', 'user'));
+  end if;
+end $$;
+
+create unique index if not exists idx_xandeflix_users_username_unique
+  on public.xandeflix_users (username)
+  where username is not null;
+
+create unique index if not exists idx_xandeflix_users_access_id_unique
+  on public.xandeflix_users (access_id)
+  where access_id is not null;
+
+create unique index if not exists idx_xandeflix_users_email_unique
+  on public.xandeflix_users (email)
+  where email is not null;
+
+create index if not exists idx_xandeflix_users_role
+  on public.xandeflix_users (role);
+
+create index if not exists idx_xandeflix_users_auth_user_id
+  on public.xandeflix_users (auth_user_id);
+
+create index if not exists idx_xandeflix_users_is_blocked
+  on public.xandeflix_users (is_blocked);
+
+create index if not exists idx_xandeflix_users_last_access
+  on public.xandeflix_users (last_access desc nulls last);
+
+drop trigger if exists trg_xandeflix_users_updated_at on public.xandeflix_users;
+create trigger trg_xandeflix_users_updated_at
+before update on public.xandeflix_users
+for each row
+execute function public.set_updated_at();
+
+create or replace function public.current_xandeflix_user_id(
+  p_auth_user_id uuid default auth.uid()
 )
-ON CONFLICT (username) DO UPDATE
-SET
-    password = CASE
-        WHEN public.xandeflix_users.password ~ '^\$2[aby]\$' THEN public.xandeflix_users.password
-        ELSE EXCLUDED.password
-    END,
-    name = EXCLUDED.name,
-    role = EXCLUDED.role;
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select xu.id
+  from public.xandeflix_users xu
+  where xu.auth_user_id = coalesce(p_auth_user_id, auth.uid())
+  limit 1;
+$$;
 
--- Tabela para salvar progresso de video ("Continue Assistindo") na nuvem
-CREATE TABLE IF NOT EXISTS public.playback_progress (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES public.xandeflix_users(id) ON DELETE CASCADE,
-    media_id TEXT NOT NULL,
-    playback_time NUMERIC NOT NULL,
-    duration NUMERIC NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(user_id, media_id)
+create or replace function public.is_xandeflix_admin(
+  p_auth_user_id uuid default auth.uid()
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.xandeflix_users xu
+    where xu.auth_user_id = coalesce(p_auth_user_id, auth.uid())
+      and xu.role = 'admin'
+      and xu.is_blocked = false
+  );
+$$;
+
+grant execute on function public.current_xandeflix_user_id(uuid) to authenticated, service_role;
+grant execute on function public.is_xandeflix_admin(uuid) to authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- User preferences
+-- -----------------------------------------------------------------------------
+-- Preferencias que hoje vivem em Zustand/localStorage e podem migrar
+-- gradualmente para o banco.
+
+create table if not exists public.user_preferences (
+  user_id uuid primary key references public.xandeflix_users (id) on delete cascade,
+  favorites jsonb not null default '[]'::jsonb,
+  watch_history jsonb not null default '{}'::jsonb,
+  playback_progress jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
 );
 
--- Telemetria resumida do player ao vivo.
--- Importante: esta tabela recebe apenas resumos de sessao/anomalia, nao eventos brutos.
-CREATE TABLE IF NOT EXISTS public.player_telemetry_reports (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES public.xandeflix_users(id) ON DELETE SET NULL,
-    session_role TEXT DEFAULT 'anonymous',
-    media_id TEXT NOT NULL,
-    media_title TEXT NOT NULL,
-    media_category TEXT,
-    media_type TEXT NOT NULL DEFAULT 'live',
-    stream_host TEXT,
-    strategy TEXT,
-    session_seconds NUMERIC NOT NULL DEFAULT 0,
-    watch_seconds NUMERIC NOT NULL DEFAULT 0,
-    buffer_seconds NUMERIC NOT NULL DEFAULT 0,
-    buffer_event_count INTEGER NOT NULL DEFAULT 0,
-    stall_recovery_count INTEGER NOT NULL DEFAULT 0,
-    error_recovery_count INTEGER NOT NULL DEFAULT 0,
-    ended_recovery_count INTEGER NOT NULL DEFAULT 0,
-    manual_retry_count INTEGER NOT NULL DEFAULT 0,
-    quality_fallback_count INTEGER NOT NULL DEFAULT 0,
-    fatal_error_count INTEGER NOT NULL DEFAULT 0,
-    sampled BOOLEAN NOT NULL DEFAULT false,
-    exit_reason TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+drop trigger if exists trg_user_preferences_updated_at on public.user_preferences;
+create trigger trg_user_preferences_updated_at
+before update on public.user_preferences
+for each row
+execute function public.set_updated_at();
+
+create or replace function public.handle_xandeflix_user_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.user_preferences (user_id)
+  values (new.id)
+  on conflict (user_id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_xandeflix_users_after_insert on public.xandeflix_users;
+create trigger trg_xandeflix_users_after_insert
+after insert on public.xandeflix_users
+for each row
+execute function public.handle_xandeflix_user_insert();
+
+-- -----------------------------------------------------------------------------
+-- Global media overrides
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.global_media_overrides (
+  title_match text primary key,
+  override_data jsonb not null default '{}'::jsonb,
+  created_by uuid references public.xandeflix_users (id) on delete set null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
 );
 
-CREATE INDEX IF NOT EXISTS idx_player_telemetry_reports_created_at
-    ON public.player_telemetry_reports (created_at DESC);
+drop trigger if exists trg_global_media_overrides_updated_at on public.global_media_overrides;
+create trigger trg_global_media_overrides_updated_at
+before update on public.global_media_overrides
+for each row
+execute function public.set_updated_at();
 
-CREATE INDEX IF NOT EXISTS idx_player_telemetry_reports_media_id
-    ON public.player_telemetry_reports (media_id);
+-- -----------------------------------------------------------------------------
+-- Playlist catalog snapshots
+-- -----------------------------------------------------------------------------
+-- Snapshot leve do catalogo para o painel admin consultar sem baixar a M3U
+-- diretamente no navegador.
 
--- Habilitar Seguranca em Nivel de Linha (RLS)
-ALTER TABLE public.xandeflix_users ENABLE ROW LEVEL SECURITY;
+create table if not exists public.playlist_catalog_snapshots (
+  user_id uuid primary key references public.xandeflix_users (id) on delete cascade,
+  playlist_url text not null default '',
+  epg_url text,
+  category_count integer not null default 0 check (category_count >= 0),
+  item_count integer not null default 0 check (item_count >= 0),
+  source_hash text,
+  snapshot jsonb not null default '{}'::jsonb,
+  generated_at timestamptz not null default timezone('utc', now()),
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
 
--- Politica: usuarios so veem seus proprios dados de perfil
-DROP POLICY IF EXISTS "User Profile Access" ON public.xandeflix_users;
-CREATE POLICY "User Profile Access" ON public.xandeflix_users
-FOR SELECT
-USING (auth.uid() = id);
+create index if not exists idx_playlist_catalog_snapshots_generated_at
+  on public.playlist_catalog_snapshots (generated_at desc);
 
--- Politica: administradores tem acesso total (exemplo opcional)
--- DROP POLICY IF EXISTS "Admin Full Access" ON public.xandeflix_users;
--- CREATE POLICY "Admin Full Access" ON public.xandeflix_users FOR ALL USING (role = 'admin');
+drop trigger if exists trg_playlist_catalog_snapshots_updated_at on public.playlist_catalog_snapshots;
+create trigger trg_playlist_catalog_snapshots_updated_at
+before update on public.playlist_catalog_snapshots
+for each row
+execute function public.set_updated_at();
 
-ALTER TABLE public.playback_progress ENABLE ROW LEVEL SECURITY;
+-- -----------------------------------------------------------------------------
+-- Player telemetry
+-- -----------------------------------------------------------------------------
 
--- Politica: usuarios so gerenciam seu proprio progresso de video
-DROP POLICY IF EXISTS "User Progress Ownership" ON public.playback_progress;
-CREATE POLICY "User Progress Ownership" ON public.playback_progress
-FOR ALL
-USING (auth.uid() = user_id)
-WITH CHECK (auth.uid() = user_id);
+create table if not exists public.player_telemetry_reports (
+  id bigint generated always as identity primary key,
+  user_id uuid references public.xandeflix_users (id) on delete set null,
+  session_role text not null default 'anonymous',
+  media_id text not null,
+  media_title text not null,
+  media_category text not null default '',
+  media_type text not null default 'live',
+  stream_host text not null default '',
+  strategy text not null default 'unknown',
+  session_seconds integer not null default 0 check (session_seconds >= 0),
+  watch_seconds integer not null default 0 check (watch_seconds >= 0),
+  buffer_seconds integer not null default 0 check (buffer_seconds >= 0),
+  buffer_event_count integer not null default 0 check (buffer_event_count >= 0),
+  stall_recovery_count integer not null default 0 check (stall_recovery_count >= 0),
+  error_recovery_count integer not null default 0 check (error_recovery_count >= 0),
+  ended_recovery_count integer not null default 0 check (ended_recovery_count >= 0),
+  manual_retry_count integer not null default 0 check (manual_retry_count >= 0),
+  quality_fallback_count integer not null default 0 check (quality_fallback_count >= 0),
+  fatal_error_count integer not null default 0 check (fatal_error_count >= 0),
+  sampled boolean not null default false,
+  exit_reason text not null default 'unknown',
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_player_telemetry_reports_created_at
+  on public.player_telemetry_reports (created_at desc);
+
+create index if not exists idx_player_telemetry_reports_user_id
+  on public.player_telemetry_reports (user_id);
+
+create index if not exists idx_player_telemetry_reports_media_id
+  on public.player_telemetry_reports (media_id);
+
+-- -----------------------------------------------------------------------------
+-- Auth sync helpers
+-- -----------------------------------------------------------------------------
+-- O trigger abaixo suporta o caso em que o admin pre-cadastra um perfil
+-- (email/access_id) antes de a conta existir em auth.users.
+
+create or replace function public.handle_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_existing_user_id uuid;
+  v_name text;
+  v_username citext;
+  v_access_id citext;
+  v_role text;
+begin
+  v_name := coalesce(
+    nullif(trim(new.raw_user_meta_data ->> 'name'), ''),
+    split_part(coalesce(new.email, ''), '@', 1),
+    'Usuario'
+  );
+
+  v_username := nullif(
+    coalesce(
+      nullif(trim(new.raw_user_meta_data ->> 'username'), ''),
+      split_part(coalesce(new.email, ''), '@', 1)
+    ),
+    ''
+  )::citext;
+
+  v_access_id := nullif(trim(new.raw_user_meta_data ->> 'access_id'), '')::citext;
+  v_role := case
+    when lower(coalesce(new.raw_user_meta_data ->> 'role', 'user')) = 'admin' then 'admin'
+    else 'user'
+  end;
+
+  select xu.id
+  into v_existing_user_id
+  from public.xandeflix_users xu
+  where xu.auth_user_id = new.id
+     or (new.email is not null and xu.email = new.email)
+     or (v_access_id is not null and xu.access_id = v_access_id)
+  order by case
+    when xu.auth_user_id = new.id then 0
+    when new.email is not null and xu.email = new.email then 1
+    when v_access_id is not null and xu.access_id = v_access_id then 2
+    else 3
+  end
+  limit 1;
+
+  if v_existing_user_id is null then
+    insert into public.xandeflix_users (
+      auth_user_id,
+      email,
+      access_id,
+      name,
+      username,
+      role
+    )
+    values (
+      new.id,
+      new.email,
+      v_access_id,
+      v_name,
+      v_username,
+      v_role
+    )
+    returning id into v_existing_user_id;
+  else
+    update public.xandeflix_users
+    set auth_user_id = new.id,
+        email = coalesce(public.xandeflix_users.email, new.email),
+        access_id = coalesce(public.xandeflix_users.access_id, v_access_id),
+        name = case
+          when coalesce(trim(public.xandeflix_users.name), '') = '' then v_name
+          else public.xandeflix_users.name
+        end,
+        username = coalesce(public.xandeflix_users.username, v_username),
+        role = case
+          when public.xandeflix_users.role in ('admin', 'user') then public.xandeflix_users.role
+          else v_role
+        end
+    where public.xandeflix_users.id = v_existing_user_id;
+  end if;
+
+  insert into public.user_preferences (user_id)
+  values (v_existing_user_id)
+  on conflict (user_id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row
+execute function public.handle_new_auth_user();
+
+create or replace function public.sync_auth_users_to_xandeflix_users()
+returns table (
+  linked_count integer,
+  inserted_count integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_linked_count integer := 0;
+  v_inserted_count integer := 0;
+begin
+  update public.xandeflix_users xu
+  set auth_user_id = au.id,
+      email = coalesce(xu.email, au.email),
+      access_id = coalesce(
+        xu.access_id,
+        nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext
+      ),
+      name = case
+        when coalesce(trim(xu.name), '') = '' then coalesce(
+          nullif(trim(au.raw_user_meta_data ->> 'name'), ''),
+          split_part(coalesce(au.email, ''), '@', 1),
+          'Usuario'
+        )
+        else xu.name
+      end,
+      username = coalesce(
+        xu.username,
+        nullif(
+          coalesce(
+            nullif(trim(au.raw_user_meta_data ->> 'username'), ''),
+            split_part(coalesce(au.email, ''), '@', 1)
+          ),
+          ''
+        )::citext
+      ),
+      updated_at = timezone('utc', now())
+  from auth.users au
+  where (xu.auth_user_id is null or xu.auth_user_id <> au.id)
+    and (
+      (au.email is not null and xu.email = au.email)
+      or (
+        nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext is not null
+        and xu.access_id = nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext
+      )
+      or (
+        xu.username is not null
+        and lower(xu.username::text) = lower(split_part(coalesce(au.email, ''), '@', 1))
+      )
+    );
+
+  get diagnostics v_linked_count = row_count;
+
+  insert into public.xandeflix_users (
+    auth_user_id,
+    email,
+    access_id,
+    name,
+    username,
+    role
+  )
+  select
+    au.id,
+    au.email,
+    nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext,
+    coalesce(
+      nullif(trim(au.raw_user_meta_data ->> 'name'), ''),
+      split_part(coalesce(au.email, ''), '@', 1),
+      'Usuario'
+    ),
+    nullif(
+      coalesce(
+        nullif(trim(au.raw_user_meta_data ->> 'username'), ''),
+        split_part(coalesce(au.email, ''), '@', 1)
+      ),
+      ''
+    )::citext,
+    case
+      when lower(coalesce(au.raw_user_meta_data ->> 'role', 'user')) = 'admin' then 'admin'
+      else 'user'
+    end
+  from auth.users au
+  where not exists (
+    select 1
+    from public.xandeflix_users xu
+    where xu.auth_user_id = au.id
+       or (au.email is not null and xu.email = au.email)
+       or (
+         nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext is not null
+         and xu.access_id = nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext
+       )
+  );
+
+  get diagnostics v_inserted_count = row_count;
+
+  insert into public.user_preferences (user_id)
+  select xu.id
+  from public.xandeflix_users xu
+  on conflict (user_id) do nothing;
+
+  return query
+  select v_linked_count, v_inserted_count;
+end;
+$$;
+
+grant execute on function public.sync_auth_users_to_xandeflix_users() to authenticated, service_role;
+
+-- Backfill para usuarios auth ja existentes
+update public.xandeflix_users xu
+set auth_user_id = au.id,
+    email = coalesce(xu.email, au.email),
+    access_id = coalesce(
+      xu.access_id,
+      nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext
+    ),
+    name = case
+      when coalesce(trim(xu.name), '') = '' then coalesce(
+        nullif(trim(au.raw_user_meta_data ->> 'name'), ''),
+        split_part(coalesce(au.email, ''), '@', 1),
+        'Usuario'
+      )
+      else xu.name
+    end,
+    username = coalesce(
+      xu.username,
+      nullif(
+        coalesce(
+          nullif(trim(au.raw_user_meta_data ->> 'username'), ''),
+          split_part(coalesce(au.email, ''), '@', 1)
+        ),
+        ''
+      )::citext
+    )
+from auth.users au
+where xu.auth_user_id is null
+  and (
+    (au.email is not null and xu.email = au.email)
+    or (
+      nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext is not null
+      and xu.access_id = nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext
+    )
+  );
+
+insert into public.xandeflix_users (
+  auth_user_id,
+  email,
+  access_id,
+  name,
+  username,
+  role
+)
+select
+  au.id,
+  au.email,
+  nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext,
+  coalesce(
+    nullif(trim(au.raw_user_meta_data ->> 'name'), ''),
+    split_part(coalesce(au.email, ''), '@', 1),
+    'Usuario'
+  ),
+  nullif(
+    coalesce(
+      nullif(trim(au.raw_user_meta_data ->> 'username'), ''),
+      split_part(coalesce(au.email, ''), '@', 1)
+    ),
+    ''
+  )::citext,
+  case
+    when lower(coalesce(au.raw_user_meta_data ->> 'role', 'user')) = 'admin' then 'admin'
+    else 'user'
+  end
+from auth.users au
+where not exists (
+  select 1
+  from public.xandeflix_users xu
+  where xu.auth_user_id = au.id
+     or (au.email is not null and xu.email = au.email)
+     or (
+       nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext is not null
+       and xu.access_id = nullif(trim(au.raw_user_meta_data ->> 'access_id'), '')::citext
+     )
+);
+
+insert into public.user_preferences (user_id)
+select xu.id
+from public.xandeflix_users xu
+on conflict (user_id) do nothing;
+
+select * from public.sync_auth_users_to_xandeflix_users();
+
+-- -----------------------------------------------------------------------------
+-- Row Level Security
+-- -----------------------------------------------------------------------------
+
+alter table public.xandeflix_users enable row level security;
+alter table public.user_preferences enable row level security;
+alter table public.global_media_overrides enable row level security;
+alter table public.playlist_catalog_snapshots enable row level security;
+alter table public.player_telemetry_reports enable row level security;
+
+-- xandeflix_users
+drop policy if exists "users_select_own_xandeflix_profile" on public.xandeflix_users;
+create policy "users_select_own_xandeflix_profile"
+on public.xandeflix_users
+for select
+to authenticated
+using (auth_user_id = auth.uid());
+
+drop policy if exists "admins_select_all_xandeflix_profiles" on public.xandeflix_users;
+create policy "admins_select_all_xandeflix_profiles"
+on public.xandeflix_users
+for select
+to authenticated
+using (public.is_xandeflix_admin());
+
+drop policy if exists "admins_insert_xandeflix_profiles" on public.xandeflix_users;
+create policy "admins_insert_xandeflix_profiles"
+on public.xandeflix_users
+for insert
+to authenticated
+with check (public.is_xandeflix_admin());
+
+drop policy if exists "admins_update_xandeflix_profiles" on public.xandeflix_users;
+create policy "admins_update_xandeflix_profiles"
+on public.xandeflix_users
+for update
+to authenticated
+using (public.is_xandeflix_admin())
+with check (public.is_xandeflix_admin());
+
+drop policy if exists "admins_delete_xandeflix_profiles" on public.xandeflix_users;
+create policy "admins_delete_xandeflix_profiles"
+on public.xandeflix_users
+for delete
+to authenticated
+using (public.is_xandeflix_admin());
+
+-- user_preferences
+drop policy if exists "users_select_own_preferences" on public.user_preferences;
+create policy "users_select_own_preferences"
+on public.user_preferences
+for select
+to authenticated
+using (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "users_insert_own_preferences" on public.user_preferences;
+create policy "users_insert_own_preferences"
+on public.user_preferences
+for insert
+to authenticated
+with check (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "users_update_own_preferences" on public.user_preferences;
+create policy "users_update_own_preferences"
+on public.user_preferences
+for update
+to authenticated
+using (user_id = public.current_xandeflix_user_id())
+with check (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "users_delete_own_preferences" on public.user_preferences;
+create policy "users_delete_own_preferences"
+on public.user_preferences
+for delete
+to authenticated
+using (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "admins_manage_all_preferences" on public.user_preferences;
+create policy "admins_manage_all_preferences"
+on public.user_preferences
+for all
+to authenticated
+using (public.is_xandeflix_admin())
+with check (public.is_xandeflix_admin());
+
+-- global_media_overrides
+drop policy if exists "authenticated_read_global_media_overrides" on public.global_media_overrides;
+create policy "authenticated_read_global_media_overrides"
+on public.global_media_overrides
+for select
+to authenticated
+using (true);
+
+drop policy if exists "admins_manage_global_media_overrides" on public.global_media_overrides;
+create policy "admins_manage_global_media_overrides"
+on public.global_media_overrides
+for all
+to authenticated
+using (public.is_xandeflix_admin())
+with check (public.is_xandeflix_admin());
+
+-- playlist_catalog_snapshots
+drop policy if exists "users_select_own_playlist_snapshot" on public.playlist_catalog_snapshots;
+create policy "users_select_own_playlist_snapshot"
+on public.playlist_catalog_snapshots
+for select
+to authenticated
+using (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "users_insert_own_playlist_snapshot" on public.playlist_catalog_snapshots;
+create policy "users_insert_own_playlist_snapshot"
+on public.playlist_catalog_snapshots
+for insert
+to authenticated
+with check (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "users_update_own_playlist_snapshot" on public.playlist_catalog_snapshots;
+create policy "users_update_own_playlist_snapshot"
+on public.playlist_catalog_snapshots
+for update
+to authenticated
+using (user_id = public.current_xandeflix_user_id())
+with check (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "users_delete_own_playlist_snapshot" on public.playlist_catalog_snapshots;
+create policy "users_delete_own_playlist_snapshot"
+on public.playlist_catalog_snapshots
+for delete
+to authenticated
+using (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "admins_read_all_playlist_snapshots" on public.playlist_catalog_snapshots;
+create policy "admins_read_all_playlist_snapshots"
+on public.playlist_catalog_snapshots
+for select
+to authenticated
+using (public.is_xandeflix_admin());
+
+drop policy if exists "admins_manage_all_playlist_snapshots" on public.playlist_catalog_snapshots;
+create policy "admins_manage_all_playlist_snapshots"
+on public.playlist_catalog_snapshots
+for all
+to authenticated
+using (public.is_xandeflix_admin())
+with check (public.is_xandeflix_admin());
+
+-- player_telemetry_reports
+drop policy if exists "users_insert_own_telemetry" on public.player_telemetry_reports;
+create policy "users_insert_own_telemetry"
+on public.player_telemetry_reports
+for insert
+to authenticated
+with check (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "users_select_own_telemetry" on public.player_telemetry_reports;
+create policy "users_select_own_telemetry"
+on public.player_telemetry_reports
+for select
+to authenticated
+using (user_id = public.current_xandeflix_user_id());
+
+drop policy if exists "admins_read_all_telemetry" on public.player_telemetry_reports;
+create policy "admins_read_all_telemetry"
+on public.player_telemetry_reports
+for select
+to authenticated
+using (public.is_xandeflix_admin());
+
+drop policy if exists "admins_delete_all_telemetry" on public.player_telemetry_reports;
+create policy "admins_delete_all_telemetry"
+on public.player_telemetry_reports
+for delete
+to authenticated
+using (public.is_xandeflix_admin());
+
+commit;
+
+-- -----------------------------------------------------------------------------
+-- Pos-setup manual
+-- -----------------------------------------------------------------------------
+-- 1. Crie o primeiro usuario no Supabase Auth.
+-- 2. Promova esse usuario a admin com um update manual como este:
+--
+-- update public.xandeflix_users
+-- set role = 'admin',
+--     access_id = 'admin',
+--     username = 'admin',
+--     name = 'Administrador'
+-- where email = 'SEU_EMAIL@DOMINIO.COM';
+--
+-- 3. A coluna public.xandeflix_users.access_id ja esta pronta para continuar
+--    suportando "ID de acesso" alem de email/senha.
