@@ -26,10 +26,6 @@ export default defineConfig(({ mode }) => {
               return undefined;
             }
 
-            if (id.includes('mpegts.js') || id.includes('video.js') || id.includes('mux.js')) {
-              return 'player-core';
-            }
-
             if (id.includes('@supabase/supabase-js')) {
               return 'supabase';
             }

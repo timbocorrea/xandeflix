@@ -1,4 +1,4 @@
-import { Category, Media, MediaType } from "../types";
+import { Category, Media, MediaType } from "../types/index.js";
 
 export class M3UParser {
   private static extractAttributeValue(attributes: string, attributeName: string): string | undefined {
@@ -130,18 +130,43 @@ export class M3UParser {
     return normalized;
   }
 
+  private static *iterateLines(m3uContent: string): Generator<string> {
+    let lineStart = 0;
+
+    for (let index = 0; index < m3uContent.length; index += 1) {
+      const charCode = m3uContent.charCodeAt(index);
+      if (charCode !== 10 && charCode !== 13) {
+        continue;
+      }
+
+      const line = m3uContent.slice(lineStart, index).trim();
+      if (line) {
+        yield line;
+      }
+
+      if (charCode === 13 && m3uContent.charCodeAt(index + 1) === 10) {
+        index += 1;
+      }
+
+      lineStart = index + 1;
+    }
+
+    if (lineStart < m3uContent.length) {
+      const lastLine = m3uContent.slice(lineStart).trim();
+      if (lastLine) {
+        yield lastLine;
+      }
+    }
+  }
+
   /**
    * Parses the full M3U content into organized categories
    */
   public static parse(m3uContent: string, onParsedUrl?: (url: string) => void): Category[] {
-    const lines = m3uContent.split(/\r?\n/);
     const items: Media[] = [];
     let currentItem: Partial<Media> | null = null;
 
-    for (let line of lines) {
-      line = line.trim();
-      if (!line) continue;
-
+    for (const line of this.iterateLines(m3uContent)) {
       if (line.toUpperCase().startsWith('#EXTINF')) {
         let name = 'Canal Sem Nome';
         let attributes = '';

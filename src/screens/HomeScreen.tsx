@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { View, StyleSheet, ScrollView, Animated, Dimensions, TouchableHighlight, Text, TextInput } from 'react-native';
 import { RotateCcw, Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -208,14 +209,14 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
       return false;
     }
 
-    setIsPlayerMinimized(true);
-
     if (isPictureInPictureActive) {
+      setIsPlayerMinimized(true);
       setIsDetachedToPiP(true);
       return true;
     }
 
     const enteredPiP = (await activePlayerRef.current?.enterPictureInPicture()) ?? false;
+    setIsPlayerMinimized(enteredPiP);
     setIsDetachedToPiP(enteredPiP);
     return enteredPiP;
   }, [activeVideoUrl, isPictureInPictureActive]);
@@ -223,7 +224,7 @@ const HomeScreen: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   // Handle play action
   const handlePlay = useCallback(async (media: Media) => {
     // Don't enter fullscreen if already in browse mode — stay in browse layout
-    if (!isBrowsing) {
+    if (!isBrowsing && !Capacitor.isNativePlatform()) {
       try {
         if (typeof document !== 'undefined' && document.documentElement.requestFullscreen) {
           await document.documentElement.requestFullscreen();

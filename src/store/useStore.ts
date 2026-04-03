@@ -14,6 +14,13 @@ type PlaybackProgressEntry = {
   timestamp: number;
 };
 
+type SavePlaybackProgressInput = {
+  mediaId?: string;
+  url: string;
+  currentTime: number;
+  duration?: number;
+};
+
 interface XandeflixState {
   allCategories: Category[];
   setAllCategories: (categories: Category[]) => void;
@@ -39,7 +46,8 @@ interface XandeflixState {
   toggleFavorite: (videoUrl: string) => void;
   
   watchHistory: Record<string, number>; // url -> timeInSeconds
-  updateWatchHistory: (url: string, timeInSeconds: number) => void;
+  updateWatchHistory: (url: string, timeInSeconds: number, duration?: number) => void;
+  savePlaybackProgress: (input: SavePlaybackProgressInput) => void;
 
   epgData: Record<string, EPGProgram[]> | null;
   setEpgData: (epgData: Record<string, EPGProgram[]> | null) => void;
@@ -95,7 +103,7 @@ export const useStore = create<XandeflixState>()(
             : [...state.favorites, url]
         })),
 
-      updateWatchHistory: (url: string, time: number) =>
+      updateWatchHistory: (url: string, time: number, duration?: number) =>
         set((state) => ({
           watchHistory: {
             ...state.watchHistory,
@@ -105,11 +113,38 @@ export const useStore = create<XandeflixState>()(
             ...state.playbackProgress,
             [url]: {
               currentTime: time,
-              duration: state.playbackProgress[url]?.duration || 0,
+              duration: duration ?? state.playbackProgress[url]?.duration ?? 0,
               timestamp: Date.now(),
             },
           },
         })),
+
+      savePlaybackProgress: ({ mediaId, url, currentTime, duration }) =>
+        set((state) => {
+          const previousUrlEntry = state.playbackProgress[url];
+          const previousMediaEntry = mediaId ? state.playbackProgress[mediaId] : undefined;
+          const entry: PlaybackProgressEntry = {
+            currentTime,
+            duration:
+              duration ??
+              previousMediaEntry?.duration ??
+              previousUrlEntry?.duration ??
+              0,
+            timestamp: Date.now(),
+          };
+
+          return {
+            watchHistory: {
+              ...state.watchHistory,
+              [url]: currentTime,
+            },
+            playbackProgress: {
+              ...state.playbackProgress,
+              [url]: entry,
+              ...(mediaId ? { [mediaId]: entry } : {}),
+            },
+          };
+        }),
 
       setEpgData: (epgData) => set({ epgData }),
 
@@ -158,6 +193,7 @@ export const useStore = create<XandeflixState>()(
       partialize: (state) => ({
         favorites: state.favorites,
         watchHistory: state.watchHistory,
+        playbackProgress: state.playbackProgress,
         hiddenCategoryIds: state.hiddenCategoryIds,
         isAdminMode: state.isAdminMode,
         adultAccess: state.adultAccess,

@@ -66,7 +66,7 @@ const MediaItem = React.memo(({
   // Use cover for beautiful 2:3 tmdb posters, but contain for random 16:9 IPTV logos to avoid heavy cropping 
   const displayMode = (tmdbData?.thumbnail || isBroken) ? 'cover' : 'contain';
 
-  const progress = playbackProgress[item.id];
+  const progress = playbackProgress[item.id] || playbackProgress[item.videoUrl];
   const percentComplete = progress && progress.duration > 0 ? (progress.currentTime / progress.duration) * 100 : 0;
 
   return (

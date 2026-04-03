@@ -3,7 +3,7 @@ import { Users, Shield, Link as LinkIcon, LogOut, Check, ShieldAlert, Plus, Tras
 import { useStore } from '../store/useStore';
 import { M3UParser } from '../lib/m3uParser';
 import { maskUrlCredentials } from '../lib/securityUtils';
-import { apiFetch, buildApiUrl } from '../lib/api';
+import { apiFetch, fetchRemoteText, isPlaylistProxyEnabled } from '../lib/api';
 
 // Wrapper to isolate lucide icons from react-native-web's createElement
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -107,14 +107,22 @@ export const AdminPanel: React.FC<{ onExitAdmin: () => void }> = ({ onExitAdmin 
     setMediaOverrides(user.mediaOverrides || {});
     setPreviewLoading(true);
     try {
-      const fetchUrl = buildApiUrl(`/api/proxy-playlist?url=${encodeURIComponent(user.playlistUrl)}`);
-      const response = await apiFetch(fetchUrl, {
-        headers: { 'x-auth-token': authToken }
-      });
-      if (!response.ok) {
-        throw new Error('Não foi possível carregar o arquivo da lista através do proxy.');
+      let m3uText = '';
+
+      if (!isPlaylistProxyEnabled()) {
+        m3uText = await fetchRemoteText(user.playlistUrl, {
+          timeoutMs: 60000,
+        });
+      } else {
+        const response = await apiFetch(`/api/proxy-playlist?url=${encodeURIComponent(user.playlistUrl)}`, {
+          headers: { 'x-auth-token': authToken }
+        });
+        if (!response.ok) {
+          throw new Error('Nao foi possivel carregar o arquivo da lista atraves do proxy.');
+        }
+        m3uText = await response.text();
       }
-      const m3uText = await response.text();
+
       const parsedCategories = M3UParser.parse(m3uText);
       setPreviewCategories(parsedCategories);
     } catch (err: any) {

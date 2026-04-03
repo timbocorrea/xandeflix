@@ -15,6 +15,8 @@ import { AdminService } from './server/services/AdminService.js';
 import { AuthSessionService } from './server/services/AuthSessionService.js';
 import { PlayerTelemetryService } from './server/services/PlayerTelemetryService.js';
 import { TMDBService } from './server/services/TMDBService.js';
+import { M3UParser } from './src/lib/m3uParser.js';
+import type { Category, Media } from './src/types/index.js';
 
 // Import Middleware
 import { whitelistMiddleware, securityHeadersMiddleware } from './server/middleware/security.js';
@@ -36,6 +38,53 @@ console.log(`[SECURITY] Mode: ${isProductionRuntime && process.env.ALLOW_ALL_DOM
  * Global State & Cache Configuration
  */
 const authorizedDomains = new Set<string>(['dnsd1.space']);
+const BOOTSTRAP_ITEMS_PER_CATEGORY = 12;
+type CompactPlaylistEpisode = {
+  t: string;
+  u: string;
+  s: number;
+  e: number;
+};
+
+type CompactPlaylistSeason = {
+  n: number;
+  ep: CompactPlaylistEpisode[];
+};
+
+type CompactPlaylistQuality = {
+  n: string;
+  u: string;
+};
+
+type CompactPlaylistMedia = {
+  t: string;
+  u?: string;
+  y?: string;
+  l?: string;
+  g?: string;
+  n?: string;
+  q?: CompactPlaylistQuality[];
+  se?: CompactPlaylistSeason[];
+};
+
+type CompactPlaylistCategory = {
+  i: string;
+  t: string;
+  y?: string;
+  it: CompactPlaylistMedia[];
+};
+
+const playlistBootstrapCache = new Map<
+  string,
+  {
+    timestamp: number;
+    payload: {
+      playlistUrl: string;
+      epgUrl: string | null;
+      categories: CompactPlaylistCategory[];
+    };
+  }
+>();
 if (!isProductionRuntime || process.env.ALLOW_ALL_DOMAINS === 'true') {
   authorizedDomains.add('localhost');
   authorizedDomains.add('127.0.0.1');
@@ -420,6 +469,65 @@ function buildProxyMediaPath(
   }
 
   return `/api/proxy-media?${params.toString()}`;
+}
+
+function shouldKeepArtwork(url?: string): boolean {
+  const normalized = (url || '').trim();
+  return normalized.length > 0 && !normalized.includes('picsum.photos/seed/');
+}
+
+function compactPlaylistCategories(categories: Category[]): CompactPlaylistCategory[] {
+  return categories.map((category) => ({
+    i: category.id,
+    t: category.title,
+    ...(category.type ? { y: category.type } : {}),
+    it: category.items.slice(0, BOOTSTRAP_ITEMS_PER_CATEGORY).map((item: Media) => {
+      const compactItem: CompactPlaylistMedia = {
+        t: item.title,
+      };
+
+      if (item.videoUrl) {
+        compactItem.u = item.videoUrl;
+      }
+
+      if (item.type && item.type !== category.type) {
+        compactItem.y = item.type;
+      }
+
+      if (shouldKeepArtwork(item.thumbnail)) {
+        compactItem.l = item.thumbnail;
+      }
+
+      if (item.tvgId) {
+        compactItem.g = item.tvgId;
+      }
+
+      if (item.tvgName) {
+        compactItem.n = item.tvgName;
+      }
+
+      if (item.qualities?.length) {
+        compactItem.q = item.qualities.map((quality) => ({
+          n: quality.name,
+          u: quality.url,
+        }));
+      }
+
+      if (item.seasons?.length) {
+        compactItem.se = item.seasons.map((season) => ({
+          n: season.seasonNumber,
+          ep: season.episodes.map((episode) => ({
+            t: episode.title,
+            u: episode.videoUrl,
+            s: episode.seasonNumber,
+            e: episode.episodeNumber,
+          })),
+        }));
+      }
+
+      return compactItem;
+    }),
+  }));
 }
 
 function rewriteHlsPlaylist(
@@ -856,6 +964,60 @@ app.get('/api/auth/me', async (req, res) => {
     res.json(serializeUser(user));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/playlist/bootstrap', async (req, res) => {
+  try {
+    const { user } = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const playlistUrl = (user.playlistUrl || '').trim();
+    if (!playlistUrl) {
+      return res.status(400).json({ error: 'Nenhuma URL de playlist configurada.' });
+    }
+
+    if (!isRemoteHttpUrl(playlistUrl)) {
+      return res.status(400).json({ error: 'URL da playlist invalida.' });
+    }
+
+    const cacheKey = `${user.id}:${playlistUrl}`;
+    const cachedEntry = playlistBootstrapCache.get(cacheKey);
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+
+    if (cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_TTL_MS) {
+      return res.json({
+        ...cachedEntry.payload,
+        cached: true,
+      });
+    }
+
+    console.log(`[BOOTSTRAP] Processando playlist para ${user.username} em ${getUrlHostLabel(playlistUrl)}...`);
+
+    const { text } = await fetchRemoteText(playlistUrl);
+    const epgUrl = extractUrlTvgFromM3u(text);
+    if (epgUrl && isRemoteHttpUrl(epgUrl)) {
+      registerAuthorizedDomainFromUrl(epgUrl);
+    }
+
+    const categories = compactPlaylistCategories(M3UParser.parse(text));
+    const payload = {
+      playlistUrl,
+      epgUrl,
+      categories,
+    };
+
+    playlistBootstrapCache.set(cacheKey, {
+      timestamp: Date.now(),
+      payload,
+    });
+
+    res.json(payload);
+  } catch (e: any) {
+    console.error('[BOOTSTRAP] Falha ao processar playlist:', e);
+    res.status(500).json({ error: e.message || 'Falha ao processar playlist.' });
   }
 });
 
